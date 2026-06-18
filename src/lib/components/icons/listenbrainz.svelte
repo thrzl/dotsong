@@ -1,0 +1,5 @@
+<script lang="ts">
+    let {class: className} = $props();
+</script>
+
+<svg id="a" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 27 30" class={className}><defs><style>.b{fill:#353070;}.c{fill:#eb743b;}</style></defs><polygon class="b" points="13 1 1 8 1 22 13 29 13 1"/><polygon class="c" points="14 1 26 8 26 22 14 29 14 1"/></svg>

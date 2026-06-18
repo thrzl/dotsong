@@ -1,0 +1,22 @@
+# dotsong
+
+dotsong is a simple cross-platform tray app that allows users to scrobble now playing tracks from anywhere to last.fm, listenbrainz, and libre.fm
+
+it also allows you to display your current song as your discord presence
+
+## why
+
+nobody else does this for free, for some reason
+
+## what's a dotsong
+
+a reference to a [song](https://listenbrainz.org/track/361a0065-9eed-4ba2-be02-f87db26dadfc)
+
+## how does it work
+
+dotsong uses the media center on all platforms to access the currently playing song. on macOS, this is done via the private `MediaRemote` framework (which falls back to AppleScript, but that only really supports Apple Music and Spotify)
+
+## goals
+
+- be lightweight (at least lighter than music presence)
+- be perfectable. this app should be written so that if i stopped updating it, 5 years later it'd still work great
