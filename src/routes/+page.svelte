@@ -1,234 +1,278 @@
 <script lang="ts">
 	import { invoke } from "@tauri-apps/api/core";
-	import * as Card from "$lib/components/ui/card";
-	import * as Field from "$lib/components/ui/field";
 	import { Input } from "$lib/components/ui/input";
-	import { Label } from "$lib/components/ui/label";
+	import { Button } from "$lib/components/ui/button";
 	import { Switch } from "$lib/components/ui/switch";
 	import { Separator } from "$lib/components/ui/separator";
-	import { Button } from "$lib/components/ui/button";
-	import MusicIcon from "@lucide/svelte/icons/music-2";
-	import Disc3Icon from "@lucide/svelte/icons/disc-3";
-	import HeadphonesIcon from "@lucide/svelte/icons/headphones";
-	import MessageSquareIcon from "@lucide/svelte/icons/message-square";
+	import * as Field from "$lib/components/ui/field";
+	import * as ToggleGroup from "$lib/components/ui/toggle-group";
+	import * as InputGroup from "$lib/components/ui/input-group";
+	import * as Empty from "$lib/components/ui/empty";
+	import PlusIcon from "@lucide/svelte/icons/plus";
+	import XIcon from "@lucide/svelte/icons/x";
 	import EyeIcon from "@lucide/svelte/icons/eye";
 	import EyeOffIcon from "@lucide/svelte/icons/eye-off";
 	import SaveIcon from "@lucide/svelte/icons/save";
 	import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
-	import LastFMIcon from "$lib/components/icons/lastfm.svelte";
-	import ListenBrainzIcon from "$lib/components/icons/listenbrainz.svelte";
-	import LibreFMIcon from "$lib/components/icons/librefm.svelte";
+	import {onMount} from "svelte";
+	import {getCurrentWindow} from "@tauri-apps/api/window";
 
-	type ScrobbleService = {
-		id: "lastfm" | "listenbrainz" | "librefm";
-		name: string;
-		description: string;
-		keyLabel: string;
-		keyPlaceholder: string;
-		keyHelp: string;
+	type ScrobblerFormat = "LastFM" | "ListenBrainz";
+
+	type Scrobbler = {
+		id: string;
+		format: ScrobblerFormat;
+		endpoint_url: string;
+		api_key: string;
+		revealed: boolean;
 	};
 
-	const services: ScrobbleService[] = [
+	type Config = {
+		scrobblers: Scrobbler[];
+		discord_rpc_enabled: boolean;
+	};
+
+	const FORMATS = [
 		{
-			id: "lastfm",
-			name: "Last.fm",
-			description: "Scrobble tracks to your Last.fm profile.",
-			keyLabel: "API key",
-			keyPlaceholder: "Paste your Last.fm API key",
-			keyHelp: "Generate one at <a href=\"https://last.fm/api/account/create\" target=\"_blank\">last.fm/api/account/create</a>.",
+			value: "LastFM" as const,
+			label: "last.fm",
+			keyLabel: "api key",
+			defaultEndpoint: "https://ws.audioscrobbler.com/2.0/",
 		},
 		{
-			id: "listenbrainz",
-			name: "ListenBrainz",
-			description: "Submit listens to ListenBrainz.",
-			keyLabel: "User token",
-			keyPlaceholder: "Paste your ListenBrainz user token",
-			keyHelp: "Find it at <a href=\"https://listenbrainz.org/settings\" target=\"_blank\">listenbrainz.org/settings</a>.",
+			value: "ListenBrainz" as const,
+			label: "listenbrainz",
+			keyLabel: "user token",
+			defaultEndpoint: "https://api.listenbrainz.org/1/",
 		},
-		// {
-		// 	id: "librefm",
-		// 	name: "Libre.fm",
-		// 	description: "Scrobble tracks to Libre.fm.",
-		// 	keyLabel: "API key",
-		// 	keyPlaceholder: "Paste your Libre.fm API key",
-		// 	keyHelp: "Request one from the Libre.fm API page.",
-		// },
 	];
 
-	type ScrobbleConfig = {
-		enabled: boolean;
-		apiKey: string;
-	};
+	const formatMeta = (f: ScrobblerFormat) =>
+		FORMATS.find((x) => x.value === f)!;
 
-	type Config = Record<ScrobbleService["id"], ScrobbleConfig> & {
-		discordRichPresence: boolean;
-	};
+	function newScrobbler(format: ScrobblerFormat = "LastFM"): Scrobbler {
+		return {
+			id: crypto.randomUUID(),
+			format,
+			endpoint_url: formatMeta(format).defaultEndpoint,
+			api_key: "",
+			revealed: false,
+		};
+	}
 
 	const defaults: Config = {
-		lastfm: { enabled: false, apiKey: "" },
-		listenbrainz: { enabled: false, apiKey: "" },
-		librefm: { enabled: false, apiKey: "" },
-		discordRichPresence: false,
+		scrobblers: [],
+		discord_rpc_enabled: false,
 	};
 
 	let config = $state<Config>(structuredClone(defaults));
-	let revealed = $state<Record<ScrobbleService["id"], boolean>>({
-		lastfm: false,
-		listenbrainz: false,
-		librefm: false,
-	});
 
 	function reset() {
 		config = structuredClone(defaults);
-		revealed = { lastfm: false, listenbrainz: false, librefm: false };
+	}
+
+	function addScrobbler(format: ScrobblerFormat) {
+		config.scrobblers = [...config.scrobblers, newScrobbler(format)];
+	}
+
+	function removeScrobbler(id: string) {
+		config.scrobblers = config.scrobblers.filter((s) => s.id !== id);
+	}
+
+	function changeFormat(s: Scrobbler, newFormat: string | null) {
+		if (!newFormat) return;
+		const format = newFormat as ScrobblerFormat;
+		const isDefault = FORMATS.some((f) => f.defaultEndpoint === s.endpoint_url);
+		s.format = format;
+		if (isDefault) s.endpoint_url = formatMeta(format).defaultEndpoint;
 	}
 
 	async function save() {
+		console.log("saving config...");
 		try {
-			await invoke("save_config", { config });
+			const payload = {
+				scrobblers: config.scrobblers.map((s) => ({
+					id: s.id,
+					endpoint_url: s.endpoint_url,
+					api_key: s.api_key,
+					format: s.format,
+				})),
+				discord_rpc_enabled: config.discord_rpc_enabled,
+			};
+			await invoke("save_config", { config: payload });
 		} catch (err) {
-			console.warn("save_config unavailable:", err);
+			console.error("save_config unavailable:", err);
 		}
+		await close();
 	}
 
-	function toggleReveal(id: ScrobbleService["id"]) {
-		revealed[id] = !revealed[id];
+	async function close() {
+		const window = getCurrentWindow();
+		await window.close();
 	}
+
+	onMount(async () => {
+		console.log("loading config...");
+		try {
+			const savedConfig = await invoke<Config>("load_config");
+			config = savedConfig;
+			console.log("saved:", config)
+		} catch (err) {
+			console.error("load_config unavailable:", err);
+		}
+	});
 </script>
 
-<main class="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
+<main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-8 text-sm">
 	<header class="flex flex-col gap-1">
-		<h1 class="text-2xl font-semibold tracking-tight">dotsong</h1>
-		<p class="text-muted-foreground text-sm">
-			Configure your scrobbling services and Discord integration.
-		</p>
+		<h1 class="text-foreground text-lg font-semibold tracking-tight lowercase">
+			dotsong settings
+		</h1>
 	</header>
 
-	<section class="flex flex-col gap-3">
-		<div class="flex items-center gap-2">
-			<MusicIcon class="text-muted-foreground size-4" />
-			<h2 class="text-sm font-medium">Scrobbling</h2>
+	<Separator />
+
+	<Field.Field orientation="horizontal">
+		<Field.FieldContent>
+			<Field.FieldTitle>discord rich presence</Field.FieldTitle>
+			<Field.FieldDescription>
+				show the now-playing track in your discord status
+			</Field.FieldDescription>
+		</Field.FieldContent>
+		<Switch
+			id="discord-rpc"
+			bind:checked={config.discord_rpc_enabled}
+			aria-label="discord rich presence"
+		/>
+	</Field.Field>
+
+	<Separator />
+
+	<section class="flex flex-col gap-4">
+		<div class="flex items-baseline justify-between">
+			<h2 class="text-foreground text-sm font-semibold">scrobbling targets</h2>
+			{#if config.scrobblers.length > 0}
+				<span class="text-muted-foreground text-xs tabular-nums">
+					{config.scrobblers.length} configured
+				</span>
+			{/if}
 		</div>
 
-		{#each services as service (service.id)}
-			<Card.Root>
-				<Card.Header
-					class="flex flex-row items-start justify-between gap-4 space-y-0"
-				>
-				<div class="flex flex-col gap-1">
-					<div class="flex items-center gap-2">
-						{#if service.id === "lastfm"}
-							<LastFMIcon class="h-[1.2em]" />
-						{:else if service.id === "listenbrainz"}
-							<ListenBrainzIcon class="h-[1.2em]" />
-						{:else}
-							<LibreFMIcon class="h-[1.2em]" />
-						{/if}
-						<Card.Title>{service.name}</Card.Title>
-					</div>
-					<Card.Description
-						>{service.description}</Card.Description
-					>
-				</div>
-					<div class="flex items-center gap-2 pt-1">
-						<Label
-							for="{service.id}-enabled"
-							class="text-muted-foreground text-sm"
-						>
-							{config[service.id].enabled
-								? "Enabled"
-								: "Disabled"}
-						</Label>
-						<Switch
-							id="{service.id}-enabled"
-							bind:checked={config[service.id].enabled}
-						/>
-					</div>
-				</Card.Header>
-				<Card.Content>
-					<Separator class="mb-4" />
-					<Field.Field>
-						<Field.FieldLabel for="{service.id}-key"
-							>{service.keyLabel}</Field.FieldLabel
-						>
-						<div class="flex gap-2">
-							<Input
-								id="{service.id}-key"
-								type={revealed[service.id]
-									? "text"
-									: "password"}
-								bind:value={config[service.id].apiKey}
-								placeholder={service.keyPlaceholder}
-								disabled={!config[service.id].enabled}
-								autocomplete="off"
-								spellcheck="false"
-							/>
-							<Button
-								type="button"
-								variant="outline"
-								size="icon"
-								disabled={!config[service.id].apiKey}
-								onclick={() => toggleReveal(service.id)}
-								aria-label={revealed[service.id]
-									? "Hide {service.keyLabel}"
-									: "Show {service.keyLabel}"}
-							>
-								{#if revealed[service.id]}
-									<EyeOffIcon />
-								{:else}
-									<EyeIcon />
-								{/if}
-							</Button>
+		{#if config.scrobblers.length > 0}
+			<ul class="border-border divide-border divide-y border-y">
+				{#each config.scrobblers as s (s.id)}
+					<li class="grid grid-cols-[1fr_auto] items-start gap-x-3 py-3">
+						<div class="flex min-w-0 flex-col gap-2">
+							<div class="flex items-center gap-2">
+								<ToggleGroup.Root
+									type="single"
+									value={s.format}
+									onValueChange={(v) => changeFormat(s, v)}
+									variant="outline"
+									size="sm"
+									aria-label="format"
+									class="shrink-0"
+								>
+									<ToggleGroup.Item value="LastFM">last.fm</ToggleGroup.Item>
+									<ToggleGroup.Item value="ListenBrainz">listenbrainz</ToggleGroup.Item>
+								</ToggleGroup.Root>
+								<Input
+									bind:value={s.endpoint_url}
+									aria-label="endpoint url"
+									class="h-7 min-w-0 flex-1 rounded-md font-mono text-xs"
+									placeholder="https://..."
+									spellcheck="false"
+									autocomplete="off"
+								/>
+							</div>
+							<InputGroup.Root class="h-7 rounded-md">
+								<InputGroup.Addon align="inline-start" class="px-2">
+									<InputGroup.Text class="text-xs">
+										{formatMeta(s.format).keyLabel}
+									</InputGroup.Text>
+								</InputGroup.Addon>
+								<InputGroup.Input
+									type={s.revealed ? "text" : "password"}
+									bind:value={s.api_key}
+									placeholder="paste here"
+									spellcheck="false"
+									autocomplete="off"
+									class="font-mono text-xs"
+								/>
+								<InputGroup.Addon align="inline-end" class="px-1">
+									<InputGroup.Button
+										size="icon-xs"
+										onclick={() => (s.revealed = !s.revealed)}
+										disabled={!s.api_key}
+										aria-label={s.revealed ? "hide key" : "show key"}
+									>
+										{#if s.revealed}
+											<EyeOffIcon />
+										{:else}
+											<EyeIcon />
+										{/if}
+									</InputGroup.Button>
+								</InputGroup.Addon>
+							</InputGroup.Root>
 						</div>
-						<Field.FieldDescription>
-							{@html service.keyHelp} Stored locally on this machine.
-						</Field.FieldDescription>
-					</Field.Field>
-				</Card.Content>
-			</Card.Root>
-		{/each}
-	</section>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							class="text-muted-foreground hover:text-foreground hover:bg-destructive/10 mt-1.5 size-7 shrink-0 rounded-md"
+							onclick={() => removeScrobbler(s.id)}
+							aria-label="remove target"
+						>
+							<XIcon />
+						</Button>
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<Empty.Root class="rounded-md border">
+				<Empty.Header>
+					<Empty.Title>no targets yet</Empty.Title>
+					<Empty.Description>
+						add a last.fm or listenbrainz target below to start scrobbling.
+					</Empty.Description>
+				</Empty.Header>
+			</Empty.Root>
+		{/if}
 
-	<section class="flex flex-col gap-3">
-		<div class="flex items-center gap-2">
-			<MessageSquareIcon class="text-muted-foreground size-4" />
-			<h2 class="text-sm font-medium">Integrations</h2>
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="text-muted-foreground text-xs">add:</span>
+			{#each FORMATS as f (f.value)}
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					class="rounded-md text-xs"
+					onclick={() => addScrobbler(f.value)}
+				>
+					<PlusIcon data-icon="inline-start" />
+					{f.label}
+				</Button>
+			{/each}
+			<span class="text-muted-foreground ml-auto text-xs italic">
+				pre-fills the default endpoint url
+			</span>
 		</div>
-
-		<Card.Root>
-			<Card.Header
-				class="flex flex-row items-center justify-between gap-4 space-y-0"
-			>
-				<div class="flex flex-col gap-1">
-					<Card.Title>Discord Rich Presence</Card.Title>
-					<Card.Description>
-						Show the currently playing track in your Discord status.
-					</Card.Description>
-				</div>
-				<div class="flex items-center gap-2">
-					<Label
-						for="discord-enabled"
-						class="text-muted-foreground text-sm"
-					>
-						{config.discordRichPresence ? "Enabled" : "Disabled"}
-					</Label>
-					<Switch
-						id="discord-enabled"
-						bind:checked={config.discordRichPresence}
-					/>
-				</div>
-			</Card.Header>
-		</Card.Root>
 	</section>
+
+	<Separator />
 
 	<footer class="flex items-center justify-end gap-2">
-		<Button variant="ghost" onclick={reset}>
+		<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
 			<RotateCcwIcon data-icon="inline-start" />
-			Reset
+			reset
 		</Button>
-		<Button onclick={save}>
-			<SaveIcon data-icon="inline-start" />
-			Save changes
+		<Button variant="secondary" class="rounded-md text-xs" onclick={close}>
+			<!-- <SaveIcon data-icon="inline-start" /> -->
+			cancel
+		</Button>
+		<Button class="rounded-md text-xs w-12" onclick={save}>
+			<!-- <SaveIcon data-icon="inline-start" /> -->
+			ok
 		</Button>
 	</footer>
 </main>

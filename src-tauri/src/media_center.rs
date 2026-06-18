@@ -18,7 +18,7 @@ pub struct MediaCenter {
 
 impl MediaCenter {
     pub fn new() -> Self {
-        let (tx, rx) = broadcast::channel(1);
+        let (tx, _) = broadcast::channel(1);
         MediaCenter {
             last_track: Arc::new(Mutex::new(None)),
             track_tx: tx

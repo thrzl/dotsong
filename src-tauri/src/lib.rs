@@ -1,15 +1,15 @@
 mod config;
 mod media_center;
 mod models;
+mod scrobblers;
 
 use std::sync::Arc;
-
-use models::MediaInfo;
 use parking_lot::Mutex;
 
 use media_center::{MediaCenter, TrackUpdateEvent};
 
 use tauri::State;
+use tauri::async_runtime::JoinHandle;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIcon,
@@ -21,10 +21,44 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+fn load_config(state: tauri::State<'_, AppState>) -> config::Config {
+    let config = state.config.lock();
+    config.clone()
+}
+
+#[tauri::command]
+async fn save_config(state: tauri::State<'_, AppState>, config: config::Config) -> Result<(), String> {
+    {
+        let mut config_lock = state.config.lock();
+        *config_lock = config.clone();
+    }
+    let config_path = &state.config_path;
+    let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
+    {
+        // stop discord task if running
+        let config = state.config.lock();
+        if config.discord_rpc_enabled {
+            if state.presence_task.lock().is_none() {
+                *state.presence_task.lock() = Some(state.start_discord_presence());
+            }
+        } else {
+            println!("stopping discord presence");
+            state.stop_discord_presence();
+        }
+    }
+    println!("writing config");
+    tokio::fs::write(config_path, config_str).await.map_err(|e| format!("failed to write config file: {e}"))
+}
+
 struct AppState {
     media_center: Arc<MediaCenter>,
     tray: Arc<Mutex<TrayIcon>>,
     quitting: Arc<Mutex<bool>>,
+    config: Arc<Mutex<config::Config>>,
+    config_path: std::path::PathBuf,
+    presence_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    rpc: Arc<Mutex<Option<discord_presence::Client>>>,
 }
 
 // for windows and linux
@@ -41,6 +75,18 @@ fn get_now_playing_info() -> Option<MediaInfo> {
 }
 
 impl AppState {
+    fn stop_discord_presence(&self) {
+        if let Some(handle) = self.presence_task.lock().take() {
+            handle.abort();
+        }
+        let rpc = self.rpc.lock().take();
+        if let Some(mut rpc) = rpc {
+            rpc.clear_activity().unwrap();
+            rpc.shutdown().unwrap();
+        } else {
+            println!("no rpc client to shutdown");
+        }
+    }
     fn start_tray_updater(&self, app: &tauri::AppHandle) {
         let mut track_rx = self.media_center.get_rx();
         let tray = self.tray.clone();
@@ -80,29 +126,42 @@ impl AppState {
         });
     }
 
-    fn start_discord_presence(&self) {
+    fn start_discord_presence(&self) -> JoinHandle<()> {
         let mut rx = self.media_center.get_rx();
-        tauri::async_runtime::spawn(async move {
+        {
+            let mut rpc_lock = self.rpc.lock();
             let mut rpc = discord_presence::Client::new(1516876269248315422);
-
-            let _ = rpc.on_ready(|_client| {
-                println!("discord RPC connected");
-            });
-
             rpc.start();
+            *rpc_lock = Some(rpc);
+        }
+        let rpc = self.rpc.clone();
+        tauri::async_runtime::spawn(async move {
+            {
+                let mut guard = rpc.lock();
+                let rpc = guard.as_mut().unwrap();
+                let _ = rpc.on_ready(|_client| {
+                    println!("discord RPC connected");
+                });
+
+                rpc.start();
+            }
 
             loop {
                 if let Ok(track_event) = rx.recv().await {
+                    let mut guard = rpc.lock();
+                    let Some(client) = guard.as_mut() else {
+                        continue;
+                    };
                     let media_info = match track_event {
                         TrackUpdateEvent::NewTrack(info) => info,
                         TrackUpdateEvent::PlaybackStateChange(info) => info,
                     };
                     if !media_info.is_playing {
-                        rpc.clear_activity().unwrap();
+                        client.clear_activity().unwrap();
                         continue;
                     }
                     if media_info.title.is_some() && media_info.artist.is_some() {
-                        rpc.set_activity(|p| {
+                        client.set_activity(|p| {
                             p.activity_type(discord_presence::models::ActivityType::Listening)
                                 .status_display(discord_presence::models::DisplayType::State)
                                 .state(media_info.artist.clone().unwrap_or_default())
@@ -135,11 +194,11 @@ impl AppState {
                         })
                         .unwrap();
                     } else {
-                        rpc.clear_activity().unwrap();
+                        client.clear_activity().unwrap();
                     }
                 }
             }
-        });
+        })
     }
 }
 
@@ -197,14 +256,34 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
-            let app_state = Arc::new(AppState {
+            let app_config_dir = dirs::config_dir().expect("failed to resolve config directory").join(app.config().identifier.clone());
+            std::fs::create_dir_all(&app_config_dir).expect("failed to ensure config directory exists");
+            let config = {
+                // read app_config_dir/config.json if it exists, otherwise create it with default config
+                let config_path = app_config_dir.join("dotsong_config.json");
+                if config_path.exists() {
+                    let config_str = std::fs::read_to_string(config_path).expect("failed to read config file");
+                    serde_json::from_str(&config_str).expect("failed to parse config file")
+                } else {
+                    let default_config = config::Config::default();
+                    let config_str = serde_json::to_string_pretty(&default_config).expect("failed to serialize default config");
+                    std::fs::write(config_path, config_str).expect("failed to write default config file");
+                    default_config
+            }};
+            let app_state = AppState {
                 media_center: Arc::new(MediaCenter::new()),
                 tray: Arc::new(Mutex::new(tray)),
                 quitting: Arc::new(Mutex::new(false)),
-            });
+                config: Arc::new(Mutex::new(config)),
+                config_path: app_config_dir.join("dotsong_config.json"),
+                presence_task: Arc::new(Mutex::new(None)),
+                rpc: Arc::new(Mutex::new(None)),
+            };
 
             app_state.media_center.clone().start_media_poller();
-            app_state.start_discord_presence();
+            if app_state.config.lock().discord_rpc_enabled {
+                *app_state.presence_task.lock() = Some(app_state.start_discord_presence());
+            }
             app_state.start_tray_updater(app.handle());
 
             app.manage(app_state);
@@ -212,12 +291,12 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![greet, save_config, load_config])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
     program.run(|_app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
-            let s: State<Arc<AppState>> = _app.state();
+            let s: State<AppState> = _app.state();
             if s.quitting.lock().clone() {
                 return;
             }
