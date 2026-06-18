@@ -1,6 +1,7 @@
 use crate::models;
-use lfu::LFUCache;
+use moka::future::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub struct DeezerAlbum {
@@ -14,7 +15,7 @@ pub struct DeezerArtist {
     pub id: u64,
     pub name: String,
     pub picture: Option<String>, // this is picture_medium from the API
-}       
+}
 
 #[derive(Debug, Clone)]
 pub struct DeezerTrack {
@@ -22,24 +23,38 @@ pub struct DeezerTrack {
     pub title: String,
     pub album: DeezerAlbum,
     pub artist: String,
-    pub elapsed_time: Option<u32>,
     pub cover_artwork: Option<String>,
     pub isrc: Option<String>,
-    pub duration: u64 // duration in seconds! important!
+    pub duration: u64, // duration in seconds! important!
 }
 
 pub struct DeezerClient {
-    cache: LFUCache<String, DeezerTrack>,
+    cache: Cache<String, DeezerTrack>,
 }
 
 impl DeezerClient {
-    pub fn new(cache_size: usize) -> Self {
-        DeezerClient { cache: LFUCache::with_capacity(cache_size).expect("couldn't create LFU cache") }
+    pub fn new(cache_size: u64) -> Self {
+        DeezerClient {
+            cache: Cache::builder().max_capacity(cache_size).eviction_policy(moka::policy::EvictionPolicy::tiny_lfu()).build(),
+        }
     }
 
     pub async fn track_search(&mut self, track: &models::MediaInfo) -> Option<DeezerTrack> {
-        let query = utf8_percent_encode(&format!("{} {} {}", track.title.clone().unwrap_or_default(), track.album.clone().unwrap_or_default(), track.artist.clone().unwrap_or_default()), NON_ALPHANUMERIC).to_string();
-        if let Some(cached_track) = self.cache.get(&query) {
+        let clean_title = Regex::new(r"\(?(feat\.|ft\.)\s.+\)?")
+            .unwrap()
+            .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
+            .to_string();
+        let query = utf8_percent_encode(
+            &format!(
+                "{} {} {}",
+                clean_title,
+                track.album.clone().unwrap_or_default(),
+                track.artist.clone().unwrap_or_default()
+            ),
+            NON_ALPHANUMERIC,
+        )
+        .to_string();
+        if let Some(cached_track) = self.cache.get(&query).await {
             return Some(cached_track.clone());
         }
         let url = format!("https://api.deezer.com/search?q={}", query);
@@ -53,19 +68,53 @@ impl DeezerClient {
             None => return None,
         };
         let track_info = found_tracks.iter().find(|t| {
-            t["album"]["title"].as_str().map(|s| s.to_lowercase()) == track.album.clone().unwrap_or_default().to_lowercase().into()
+            t["album"]["title"].as_str().map(|s| s.to_lowercase())
+                == track
+                    .album
+                    .clone()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .into()
         })?;
+        let title_matches = track_info["title"].as_str().map(|s| s.to_lowercase())
+            == clean_title.to_lowercase().into();
         let track = Some(DeezerTrack {
-            id: track_info["id"].as_u64()?,
-            title: track_info["title"].as_str()?.to_string(),
-            isrc: track_info["isrc"].as_str().map(|s| s.to_string()),
-            album: DeezerAlbum { id: track_info["album"]["id"].as_u64()?, title: track_info["album"]["title"].as_str()?.to_string(), cover_artwork: track_info["album"]["cover_big"].as_str().map(|s| s.to_string()) },
+            id: if title_matches {track_info["id"].as_u64()?} else {0},
+            title: if title_matches {track_info["title"].as_str()?.to_string()} else {track.title.clone()?},
+            isrc: if title_matches {track_info["isrc"].as_str().map(|s| s.to_string())} else {None},
+            album: DeezerAlbum {
+                id: track_info["album"]["id"].as_u64()?,
+                title: track_info["album"]["title"].as_str()?.to_string(),
+                cover_artwork: track_info["album"]["cover_big"]
+                    .as_str()
+                    .map(|s| s.to_string()),
+            },
             artist: track_info["artist"]["name"].as_str()?.to_string(),
-            elapsed_time: track_info["elapsed_time"].as_u64().map(|t| t as u32),
             cover_artwork: track_info["album"]["cover"].as_str().map(|s| s.to_string()),
             duration: track_info["duration"].as_u64().unwrap_or(0),
         });
-        self.cache.set(query, track.clone().unwrap());
+        self.cache.insert(query, track.clone().unwrap()).await;
         track
+    }
+
+    pub async fn enrich_media_info(&mut self, media_info: &models::MediaInfo) -> models::MediaInfo {
+        let enriched_track = match self.track_search(media_info).await {
+            Some(track) => track,
+            None => return media_info.clone(),
+        };
+        models::MediaInfo {
+            title: Some(media_info.title.clone().unwrap_or(enriched_track.title)),
+            album: Some(
+                media_info
+                    .album
+                    .clone()
+                    .unwrap_or(enriched_track.album.title),
+            ),
+            artist: Some(media_info.artist.clone().unwrap_or(enriched_track.artist)),
+            elapsed_time: media_info.elapsed_time,
+            cover_artwork: enriched_track.cover_artwork,
+            is_playing: media_info.is_playing,
+            duration: media_info.duration.or(Some(enriched_track.duration)),
+        }
     }
 }

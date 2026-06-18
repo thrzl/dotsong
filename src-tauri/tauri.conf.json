@@ -11,16 +11,11 @@
   },
   "app": {
     "windows": [
-      {
-        "title": "dotsong",
-        "width": 800,
-        "height": 600,
-        "visible": false
-      }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
