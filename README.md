@@ -1,4 +1,4 @@
-# dotsong
+# dotsong <img src="src-tauri/icons/tray-icon.png" height="22"> 
 
 dotsong is a simple cross-platform tray app that allows users to scrobble now playing tracks from anywhere to last.fm, listenbrainz, and libre.fm
 
