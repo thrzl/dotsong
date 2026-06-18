@@ -1,8 +1,35 @@
-# dotsong <img src="src-tauri/icons/tray-icon.png" height="22"> 
+<br />
+<p align="center">
+  <a href="https://github.com/thrzl/chiffrage">
+    <img src="src-tauri/icons/icon.png" alt="dotsong project logo" width="80">
+  </a>
+
+  <h3 align="center"><b>dotsong</b></h3>
+
+  <p align="center">
+    show off your music, freely
+    <br />
+    <!-- until i get the wiki together
+        <a href="#"><strong>explore the docs »</strong></a> 
+    <br />
+    -->
+    <!-- <br /> -->
+    <!-- until i get a demo together too (i guess)
+    <a href="https://github.com/thrzl/dotsong">view demo</a>
+    ·-->
+    <a href="https://github.com/thrzl/dotsong/issues">report bug</a>
+    ·
+    <a href="https://github.com/thrzl/dotsong/issues">request feature</a>
+
+  </p>
+</p>
+
 
 dotsong is a simple cross-platform tray app that allows users to scrobble now playing tracks from anywhere to last.fm, listenbrainz, and libre.fm
 
 it also allows you to display your current song as your discord presence
+
+dotsong is currently alpha (something like that). should be stable and everything, it's just that nothing at all is complete (and the settings UI is completely useless)
 
 ## why
 
