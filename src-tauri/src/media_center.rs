@@ -1,9 +1,10 @@
+use crate::models::{self, MediaInfo};
+use crate::config::Scrobbler;
 use parking_lot::Mutex;
-use crate::models::{MediaInfo, self};
-use tokio::sync::broadcast;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
@@ -13,15 +14,27 @@ pub enum TrackUpdateEvent {
 
 pub struct MediaCenter {
     last_track: Arc<Mutex<Option<MediaInfo>>>,
-    track_tx: broadcast::Sender<TrackUpdateEvent>
+    track_tx: broadcast::Sender<TrackUpdateEvent>,
+    scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
+    scrobbling_task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl MediaCenter {
-    pub fn new() -> Self {
+    pub fn set_scrobblers(&self, scrobblers: Vec<Scrobbler>) {
+        let mut scrobblers_lock = self.scrobblers.lock();
+        *scrobblers_lock = scrobblers;
+    }
+    pub fn get_scrobblers(&self) -> Vec<Scrobbler> {
+        let scrobblers_lock = self.scrobblers.lock();
+        scrobblers_lock.clone()
+    }
+    pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
         let (tx, _) = broadcast::channel(1);
         MediaCenter {
             last_track: Arc::new(Mutex::new(None)),
-            track_tx: tx
+            track_tx: tx,
+            scrobblers: Arc::new(Mutex::new(scrobblers)),
+            scrobbling_task_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -57,7 +70,6 @@ impl MediaCenter {
         previous.title != current.title || previous.artist != current.artist
     }
 
-
     #[cfg(target_os = "macos")]
     pub fn start_media_poller(self: Arc<Self>) {
         println!("starting media poller");
@@ -83,7 +95,7 @@ impl MediaCenter {
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
                     cover_artwork: None,
                     is_playing: media.is_playing.unwrap_or(false),
-                    duration: media.duration.map(|t| t as u64),
+                    duration: media.duration.map(|t| t as u32),
                 };
 
                 // asynchronous enriching of media info with Deezer API
@@ -99,10 +111,36 @@ impl MediaCenter {
                         *last_track = Some(enriched_track.clone());
                     }
                 }
-                
-                tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone())).unwrap();
-                if Self::should_refresh_tray_menu(self.last_track.lock().as_ref(), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track)).unwrap();
+
+                tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                    .unwrap();
+                if Self::should_refresh_tray_menu(self.last_track.lock().as_ref(), &enriched_track)
+                {
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
+                        .unwrap();
+                }
+            }
+        });
+    }
+
+    pub fn start_scrobbling_task(self: Arc<Self>) {
+        let scrobblers = self.get_scrobblers();
+        let mut rx = self.get_rx();
+        tauri::async_runtime::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                if let TrackUpdateEvent::PlaybackStateChange(track) = event {
+                    if track.elapsed_time.is_none() || track.duration.is_none() {
+                        continue;
+                    }
+                    if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
+                        for scrobbler in &scrobblers {
+                            scrobbler.scrobble(&track).await;
+                        }
+                    } else {
+                        for scrobbler in &scrobblers {
+                            scrobbler.now_playing(&track).await;
+                        }
+                    }
                 }
             }
         });

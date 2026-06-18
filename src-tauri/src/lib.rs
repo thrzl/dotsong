@@ -1,7 +1,6 @@
 mod config;
 mod media_center;
 mod models;
-mod scrobblers;
 
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -184,7 +183,7 @@ impl AppState {
                                         let start_time = chrono::Utc::now()
                                             - chrono::Duration::seconds(elapsed_time as i64);
                                         timestamps.start(start_time.timestamp() as u64).end(
-                                            media_info.duration.unwrap()
+                                            media_info.duration.unwrap() as u64
                                                 + start_time.timestamp() as u64,
                                         )
                                     } else {
@@ -271,7 +270,7 @@ pub fn run() {
                     default_config
             }};
             let app_state = AppState {
-                media_center: Arc::new(MediaCenter::new()),
+                media_center: Arc::new(MediaCenter::new(config.scrobblers.clone())),
                 tray: Arc::new(Mutex::new(tray)),
                 quitting: Arc::new(Mutex::new(false)),
                 config: Arc::new(Mutex::new(config)),
@@ -284,6 +283,7 @@ pub fn run() {
             if app_state.config.lock().discord_rpc_enabled {
                 *app_state.presence_task.lock() = Some(app_state.start_discord_presence());
             }
+            app_state.media_center.clone().start_scrobbling_task();
             app_state.start_tray_updater(app.handle());
 
             app.manage(app_state);

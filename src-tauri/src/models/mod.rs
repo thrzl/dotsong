@@ -8,5 +8,5 @@ pub struct MediaInfo {
     pub elapsed_time: Option<u32>,
     pub cover_artwork: Option<String>,
     pub is_playing: bool,
-    pub duration: Option<u64>,
+    pub duration: Option<u32>,
 }

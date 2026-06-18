@@ -114,7 +114,7 @@ impl DeezerClient {
             elapsed_time: media_info.elapsed_time,
             cover_artwork: enriched_track.cover_artwork,
             is_playing: media_info.is_playing,
-            duration: media_info.duration.or(Some(enriched_track.duration)),
+            duration: media_info.duration.or(Some(enriched_track.duration as u32)),
         }
     }
 }
