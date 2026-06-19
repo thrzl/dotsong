@@ -4,6 +4,7 @@ use media_remote::Subscription;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio::{sync::Notify, time::Duration};
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use futures::StreamExt;
@@ -12,6 +13,7 @@ use futures::StreamExt;
 pub enum TrackUpdateEvent {
     NewTrack(MediaInfo),
     PlaybackStateChange(MediaInfo),
+    PositionChanged(MediaInfo),
 }
 
 pub struct MediaCenter {
@@ -22,6 +24,8 @@ pub struct MediaCenter {
     #[cfg(target_os = "macos")]
     macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
     deezer_client: Arc<models::deezer_api::DeezerClient>,
+
+    play_state_notify: Arc<Notify>,
 }
 
 impl MediaCenter {
@@ -43,6 +47,7 @@ impl MediaCenter {
             #[cfg(target_os = "macos")]
             macos_listener: Arc::new(Mutex::new(None)),
             deezer_client: Arc::new(models::deezer_api::DeezerClient::new(100)),
+            play_state_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -124,7 +129,10 @@ impl MediaCenter {
                     isrc: None,
                 })
             }
-            nowhear::MediaEvent::PositionChanged { player_name, position } => {
+            nowhear::MediaEvent::PositionChanged {
+                player_name,
+                position,
+            } => {
                 let player = now_playing.get_player(player_name).await.ok()?;
                 Some(match player.current_track {
                     Some(track) => MediaInfo {
@@ -149,7 +157,10 @@ impl MediaCenter {
                     },
                 })
             }
-            nowhear::MediaEvent::StateChanged { player_name, state: _ } => {
+            nowhear::MediaEvent::StateChanged {
+                player_name,
+                state: _,
+            } => {
                 let player = now_playing.get_player(player_name).await.ok()?;
                 Some(match player.current_track {
                     Some(track) => MediaInfo {
@@ -176,6 +187,44 @@ impl MediaCenter {
             }
             _ => None,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_position_ticker(self: &Arc<Self>) {
+        let tx = self.track_tx.clone();
+        let last_track = self.last_track.clone();
+        let play_state = self.play_state_notify.clone();
+        let tick = Duration::from_secs(5);
+
+        tauri::async_runtime::spawn(async move {
+            let mut is_playing = false;
+            loop {
+                if !is_playing {
+                    play_state.notified().await;
+                    is_playing = last_track.lock().as_ref().is_some_and(|t| t.is_playing);
+                    continue;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(tick) => {
+                        let mut last_track_guard = last_track.lock();
+                        if let Some(track) = last_track_guard.as_mut() {
+                            if !track.is_playing { is_playing = false; continue; }
+
+                            // if its playing then update the time
+                            if let Some(elapsed_time) = track.elapsed_time.as_mut() {
+                                *elapsed_time += tick.as_secs() as u32;
+                            }
+                            let snapshot = track.clone();
+                            drop(last_track_guard);
+                            let _ = tx.send(TrackUpdateEvent::PositionChanged(snapshot));
+                        }
+                    }
+                    _ = play_state.notified() => {
+                        is_playing = last_track.lock().as_ref().is_some_and(|track| track.is_playing);
+                    }
+                }
+            }
+        });
     }
 
     #[cfg(target_os = "macos")]
@@ -253,52 +302,40 @@ impl MediaCenter {
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     _ => continue,
                 };
-                let track = match event {
-                    TrackUpdateEvent::NewTrack(track) => track,
-                    TrackUpdateEvent::PlaybackStateChange(track) => track,
-                };
-                if track.elapsed_time.is_none() || track.duration.is_none() {
-                    continue;
-                }
                 let last_track = last_scrobble.lock().clone();
-                if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
-                    let already_scrobbled = if let Some(last_track) = last_track {
-                        // if the last scrobbled track was over 50%, we already did now playing
-                        last_track.title == track.title
-                            && last_track.album == track.album
-                            && (last_track.elapsed_time.unwrap() > last_track.duration.unwrap() / 2)
-                    } else {
-                        false
-                    };
-
-                    if already_scrobbled {
-                        continue;
-                    }
-                    for scrobbler in &scrobblers {
-                        scrobbler.scrobble(&track).await;
-                    }
-                } else {
-                    let already_scrobbled = if let Some(last_track) = last_track {
-                        // if the last scrobbled track was under 50%, we already did scrobble
-                        last_track.title == track.title
-                            && last_track.album == track.album
-                            && (last_track.elapsed_time.unwrap()
-                                <= last_track.duration.unwrap() / 2)
-                    } else {
-                        false
-                    };
-
-                    if already_scrobbled {
-                        continue;
-                    }
-                    for scrobbler in scrobblers.clone() {
-                        let track = track.clone();
-                        tauri::async_runtime::spawn(async move {
+                match event {
+                    TrackUpdateEvent::NewTrack(track) => {
+                        // when it's a new track, we do now playing
+                        for scrobbler in &scrobblers {
                             scrobbler.now_playing(&track).await;
-                        });
+                        }
                     }
-                }
-                last_scrobble.lock().replace(track.clone());
+                    TrackUpdateEvent::PositionChanged(track) => {
+                        if track.elapsed_time.is_none() || track.duration.is_none() {
+                            continue;
+                        }
+                        if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
+                            let already_scrobbled = if let Some(last_track) = last_track {
+                                // if the last scrobbled track was over 50%, we already did now playing
+                                last_track.title == track.title
+                                    && last_track.album == track.album
+                                    && (last_track.elapsed_time.unwrap()
+                                        > last_track.duration.unwrap() / 2)
+                            } else {
+                                false
+                            };
+
+                            if already_scrobbled {
+                                continue;
+                            }
+                            for scrobbler in &scrobblers {
+                                scrobbler.scrobble(&track).await;
+                            }
+                        }
+                        last_scrobble.lock().replace(track.clone());
+                    }
+                    _ => {}
+                };
             }
         }));
     }
