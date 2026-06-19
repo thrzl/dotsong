@@ -254,6 +254,9 @@ pub fn run() {
                         app.exit(0);
                     }
                     "settings" => {
+                        #[cfg(target_os = "macos")]
+                        app.set_activation_policy(tauri::ActivationPolicy::Regular)
+                            .ok();
                         // create new settings window
                         if let Some(window) = app.get_webview_window("main") {
                             window.show().unwrap();
@@ -341,6 +344,15 @@ pub fn run() {
                 return;
             }
             api.prevent_exit();
+        }
+        tauri::RunEvent::WindowEvent { label, event, .. } => {
+            if label == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    #[cfg(target_os = "macos")]
+                    _app.set_activation_policy(tauri::ActivationPolicy::Accessory)
+                        .ok();
+                }
+            }
         }
         _ => {}
     })
