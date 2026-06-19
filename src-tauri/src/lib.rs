@@ -80,12 +80,10 @@ impl AppState {
         let tray = self.tray.clone();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            // let mut track_rx = track_rx.clone();
             loop {
                 if let Ok(track_event) = track_rx.recv().await {
                     let track = match track_event {
                         TrackUpdateEvent::NewTrack(info) => info,
-                        TrackUpdateEvent::PlaybackStateChange(_) => continue,
                         _ => continue,
                     };
                     let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());

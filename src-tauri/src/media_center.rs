@@ -240,7 +240,6 @@ impl MediaCenter {
         let play_state_notify = self.play_state_notify.clone();
 
         now_playing.subscribe(move |event| {
-            println!("received event: {:?}", event);
             let event = event.clone();
             let last_track_ptr = last_track_ptr.clone();
             let tx = tx.clone();
@@ -253,11 +252,12 @@ impl MediaCenter {
                     return;
                 }
 
+                
                 let media_info = MediaInfo {
                     title: media.title,
                     album: media
-                        .album
-                        .map(|album| Self::sanitize_apple_music_album_name(&album)),
+                    .album
+                    .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
                     cover_artwork: None,
@@ -265,29 +265,27 @@ impl MediaCenter {
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
                 };
-
+                
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
                 let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
+
+                if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track.clone()))
+                        .unwrap();
+                } else {
+                    tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                        .unwrap();
+                };
                 {
                     let mut last_track = last_track_ptr.lock();
                     *last_track = Some(enriched_track.clone());
                 }
-                if last_track_ptr.lock().as_ref().map_or(true, |p| p.is_playing != media_info.is_playing) {
-                    play_state_notify.notify_one();
-                }
-
-
-                if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
-                        .unwrap();
-                    return;
-                }
-                tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
-                    .unwrap();
+                play_state_notify.notify_one();
             });
         });
         self.clone().start_position_ticker();
+        println!("started position ticker");
 
         *self.macos_listener.lock() = Some(now_playing);
     }
@@ -321,13 +319,13 @@ impl MediaCenter {
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }
-                        if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
+                        if track.elapsed_time.unwrap() > (track.duration.unwrap() / 2) {
                             let already_scrobbled = if let Some(last_track) = last_track {
                                 // if the last scrobbled track was over 50%, we already did now playing
                                 last_track.title == track.title
                                     && last_track.album == track.album
                                     && (last_track.elapsed_time.unwrap()
-                                        > last_track.duration.unwrap() / 2)
+                                        > (last_track.duration.unwrap() / 2))
                             } else {
                                 false
                             };
@@ -337,6 +335,10 @@ impl MediaCenter {
                             }
                             for scrobbler in &scrobblers {
                                 scrobbler.scrobble(&track).await;
+                            }
+                        } else if last_track.is_none() {
+                            for scrobbler in &scrobblers {
+                                scrobbler.now_playing(&track).await;
                             }
                         }
                         last_scrobble.lock().replace(track.clone());
