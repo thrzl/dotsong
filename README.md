@@ -38,7 +38,7 @@ nobody else does this for free, for some reason
 ## todo list
 
 - [x] discord rich presence
-- [ ] listenbrainz scrobbling
+- [x] listenbrainz scrobbling
 - [ ] last.fm scrobbling
 - [ ] libre.fm scrobbling (just last.fm to a diff url)
 
