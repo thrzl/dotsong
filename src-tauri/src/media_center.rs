@@ -1,9 +1,8 @@
-use crate::models::{self, MediaInfo};
 use crate::config::Scrobbler;
+use crate::models::{self, MediaInfo};
+use media_remote::Subscription;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::thread::sleep;
-use std::time::Duration;
 use tokio::sync::broadcast;
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -91,13 +90,18 @@ impl MediaCenter {
                             cover_artwork: track.art_url,
                             is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                             duration: track.duration.map(|t| t.as_secs() as u32),
-                            isrc: None
+                            isrc: None,
                         };
                         let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone())).unwrap();
+                        self.track_tx
+                            .send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                            .unwrap();
                         enriched_track
                     }
-                    nowhear::MediaEvent::PositionChanged { player_name, position } => {
+                    nowhear::MediaEvent::PositionChanged {
+                        player_name,
+                        position,
+                    } => {
                         let player = now_playing.get_player(player_name).await.unwrap();
                         let track = player.current_track;
                         let media_info = if let Some(track) = track {
@@ -107,9 +111,10 @@ impl MediaCenter {
                                 artist: Some(track.artist.join(", ")),
                                 elapsed_time: Some(position.as_secs() as u32),
                                 cover_artwork: track.art_url,
-                                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                                is_playing: player.playback_state
+                                    == nowhear::PlaybackState::Playing,
                                 duration: track.duration.map(|t| t.as_secs() as u32),
-                                isrc: None
+                                isrc: None,
                             }
                         } else {
                             MediaInfo {
@@ -118,13 +123,18 @@ impl MediaCenter {
                                 artist: None,
                                 elapsed_time: None,
                                 cover_artwork: None,
-                                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                                is_playing: player.playback_state
+                                    == nowhear::PlaybackState::Playing,
                                 duration: None,
-                                isrc: None
+                                isrc: None,
                             }
                         };
                         let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track.clone())).unwrap();
+                        self.track_tx
+                            .send(TrackUpdateEvent::PlaybackStateChange(
+                                enriched_track.clone(),
+                            ))
+                            .unwrap();
                         enriched_track
                     }
                     nowhear::MediaEvent::StateChanged { player_name, state } => {
@@ -137,9 +147,10 @@ impl MediaCenter {
                                 artist: Some(track.artist.join(", ")),
                                 elapsed_time: player.position.map(|p| p.as_secs() as u32),
                                 cover_artwork: track.art_url,
-                                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                                is_playing: player.playback_state
+                                    == nowhear::PlaybackState::Playing,
                                 duration: track.duration.map(|d| d.as_secs() as u32),
-                                isrc: None
+                                isrc: None,
                             }
                         } else {
                             MediaInfo {
@@ -148,16 +159,21 @@ impl MediaCenter {
                                 artist: None,
                                 elapsed_time: None,
                                 cover_artwork: None,
-                                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                                is_playing: player.playback_state
+                                    == nowhear::PlaybackState::Playing,
                                 duration: None,
-                                isrc: None
+                                isrc: None,
                             }
                         };
                         let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track.clone())).unwrap();
+                        self.track_tx
+                            .send(TrackUpdateEvent::PlaybackStateChange(
+                                enriched_track.clone(),
+                            ))
+                            .unwrap();
                         enriched_track
                     }
-                    _ => continue
+                    _ => continue,
                 };
 
                 // asynchronous enriching of media info with Deezer API
@@ -168,7 +184,9 @@ impl MediaCenter {
                     *last_track = Some(media_info.clone());
                 }
 
-                self.track_tx.send(TrackUpdateEvent::NewTrack(media_info.clone())).unwrap();
+                self.track_tx
+                    .send(TrackUpdateEvent::NewTrack(media_info.clone()))
+                    .unwrap();
             }
         });
     }
@@ -177,16 +195,19 @@ impl MediaCenter {
     pub fn start_media_poller(self: Arc<Self>) {
         println!("starting media poller");
         let tx = self.track_tx.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut deezer_client = models::deezer_api::DeezerClient::new(100);
-            let now_playing = media_remote::NowPlayingPerl::new();
-            loop {
-                sleep(Duration::from_millis(500));
-                let Some(media) = now_playing.get_info().clone() else {
-                    continue;
-                };
+        let now_playing = media_remote::NowPlayingPerl::new();
+        let last_track_ptr = self.last_track.clone();
+
+        now_playing.subscribe(move |event| {
+            let event = event.clone();
+            let last_track_ptr = last_track_ptr.clone();
+            let tx = tx.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut deezer_client = models::deezer_api::DeezerClient::new(100);
+                let event = event.clone();
+                let Some(media) = event.clone() else { return };
                 if media.title.is_none() && media.album.is_none() {
-                    continue;
+                    return;
                 }
 
                 let media_info = MediaInfo {
@@ -199,28 +220,28 @@ impl MediaCenter {
                     cover_artwork: None,
                     is_playing: media.is_playing.unwrap_or(false),
                     duration: media.duration.map(|t| t as u32),
-                    isrc: None
+                    isrc: None,
                 };
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
                 let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
 
-                if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched_track) {
+                if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
-                    .unwrap();
-                    continue;
+                        .unwrap();
+                    return;
                 }
                 {
                     {
-                        let mut last_track = self.last_track.lock();
+                        let mut last_track = last_track_ptr.lock();
                         *last_track = Some(enriched_track.clone());
                     }
                 }
 
                 tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                     .unwrap();
-            }
+            });
         });
     }
 
@@ -229,7 +250,10 @@ impl MediaCenter {
         let scrobblers = self.get_scrobblers();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
-        println!("spawning scrobbling task with {} scrobblers", scrobblers.len());
+        println!(
+            "spawning scrobbling task with {} scrobblers",
+            scrobblers.len()
+        );
         *task_guard = Some(tauri::async_runtime::spawn(async move {
             let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
             loop {
@@ -249,8 +273,12 @@ impl MediaCenter {
                 if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
                     let already_scrobbled = if let Some(last_track) = last_track {
                         // if the last scrobbled track was over 50%, we already did now playing
-                        last_track.title == track.title && last_track.album == track.album && (last_track.elapsed_time.unwrap() > last_track.duration.unwrap() / 2)
-                    } else {false};
+                        last_track.title == track.title
+                            && last_track.album == track.album
+                            && (last_track.elapsed_time.unwrap() > last_track.duration.unwrap() / 2)
+                    } else {
+                        false
+                    };
 
                     if already_scrobbled {
                         continue;
@@ -261,15 +289,22 @@ impl MediaCenter {
                 } else {
                     let already_scrobbled = if let Some(last_track) = last_track {
                         // if the last scrobbled track was under 50%, we already did scrobble
-                        last_track.title == track.title && last_track.album == track.album && (last_track.elapsed_time.unwrap() <= last_track.duration.unwrap() / 2)
-                    } else {false};
+                        last_track.title == track.title
+                            && last_track.album == track.album
+                            && (last_track.elapsed_time.unwrap()
+                                <= last_track.duration.unwrap() / 2)
+                    } else {
+                        false
+                    };
 
                     if already_scrobbled {
                         continue;
                     }
                     for scrobbler in scrobblers.clone() {
                         let track = track.clone();
-                        tauri::async_runtime::spawn(async move {scrobbler.now_playing(&track).await;});
+                        tauri::async_runtime::spawn(async move {
+                            scrobbler.now_playing(&track).await;
+                        });
                     }
                 }
                 last_scrobble.lock().replace(track.clone());
