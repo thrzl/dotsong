@@ -29,7 +29,7 @@ dotsong is a simple cross-platform tray app that allows users to scrobble now pl
 
 it also allows you to display your current song as your discord presence
 
-dotsong is currently alpha (something like that). should be stable and everything, it's just that nothing at all is complete (and the settings UI is completely useless)
+dotsong is currently alpha or something like that. should be stable and everything, it's just that it's very incomplete. see the todo list for more info on that
 
 ## why
 
@@ -37,6 +37,7 @@ nobody else does this for free, for some reason
 
 ## todo list
 
+- [x] working settings menu
 - [x] discord rich presence
 - [x] listenbrainz scrobbling
 - [ ] last.fm scrobbling
