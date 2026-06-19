@@ -4,7 +4,9 @@
 	import { Button } from "$lib/components/ui/button";
 	import { Switch } from "$lib/components/ui/switch";
 	import { Separator } from "$lib/components/ui/separator";
+	import { Badge } from "$lib/components/ui/badge";
 	import * as Field from "$lib/components/ui/field";
+	import * as Dialog from "$lib/components/ui/dialog";
 	import * as ToggleGroup from "$lib/components/ui/toggle-group";
 	import * as InputGroup from "$lib/components/ui/input-group";
 	import * as Empty from "$lib/components/ui/empty";
@@ -12,10 +14,10 @@
 	import XIcon from "@lucide/svelte/icons/x";
 	import EyeIcon from "@lucide/svelte/icons/eye";
 	import EyeOffIcon from "@lucide/svelte/icons/eye-off";
-	import SaveIcon from "@lucide/svelte/icons/save";
-	import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
-	import {onMount} from "svelte";
-	import {getCurrentWindow} from "@tauri-apps/api/window";
+	import PencilIcon from "@lucide/svelte/icons/pencil";
+	import LogInIcon from "@lucide/svelte/icons/log-in";
+	import { onMount } from "svelte";
+	import { getCurrentWindow } from "@tauri-apps/api/window";
 
 	type ScrobblerFormat = "LastFM" | "ListenBrainz";
 
@@ -52,12 +54,26 @@
 
 	function newScrobbler(format: ScrobblerFormat = "LastFM"): Scrobbler {
 		return {
-			id: crypto.randomUUID(),
+			id: "",
 			format,
 			endpoint_url: formatMeta(format).defaultEndpoint,
 			api_key: "",
 			revealed: false,
 		};
+	}
+
+	function detectNameFromUrl(url: string): string {
+		try {
+			const host = new URL(url).hostname;
+			if (host.endsWith(".audioscrobbler.com")) return "last.fm";
+			if (host.endsWith(".listenbrainz.org")) return "listenbrainz";
+			if (host.endsWith("libre.fm")) return "libre.fm";
+			const parts = host.split(".");
+			if (parts.length < 2) return host;
+			return parts[parts.length - 2];
+		} catch {
+			return "";
+		}
 	}
 
 	const defaults: Config = {
@@ -67,12 +83,49 @@
 
 	let config = $state<Config>(structuredClone(defaults));
 
-	function reset() {
-		config = structuredClone(defaults);
+	let dialogOpen = $state(false);
+	let editingId = $state<string | null>(null);
+	let draft = $state<Scrobbler>(newScrobbler());
+
+	$effect(() => {
+		if (!dialogOpen) draft.revealed = false;
+	});
+
+	$effect(() => {
+		const detected = detectNameFromUrl(draft.endpoint_url);
+		if (!draft.id && detected) draft.id = detected;
+	});
+
+	const nameError = $derived.by(() => {
+		const name = draft.id.trim();
+		if (!name) return "name is required";
+		if (/\s/.test(name)) return "name cannot contain spaces";
+		const duplicate = config.scrobblers.some(
+			(s) => s.id === name && s.id !== editingId,
+		);
+		if (duplicate) return "another target already uses this name";
+		return null;
+	});
+
+	function isOfficialLastFm(url: string): boolean {
+		try {
+			return new URL(url).hostname.endsWith(".audioscrobbler.com");
+		} catch {
+			return false;
+		}
 	}
 
-	function addScrobbler(format: ScrobblerFormat) {
-		config.scrobblers = [...config.scrobblers, newScrobbler(format)];
+	const showLastFmLogin = $derived(
+		draft.format === "LastFM" && isOfficialLastFm(draft.endpoint_url),
+	);
+
+	function loginWithLastFm() {
+		// TODO: open last.fm auth flow
+		console.log("login with last.fm (not yet implemented)");
+	}
+
+	function reset() {
+		config = structuredClone(defaults);
 	}
 
 	function removeScrobbler(id: string) {
@@ -82,9 +135,34 @@
 	function changeFormat(s: Scrobbler, newFormat: string | null) {
 		if (!newFormat) return;
 		const format = newFormat as ScrobblerFormat;
-		const isDefault = FORMATS.some((f) => f.defaultEndpoint === s.endpoint_url);
+		const isDefault = FORMATS.some(
+			(f) => f.defaultEndpoint === s.endpoint_url,
+		);
 		s.format = format;
 		if (isDefault) s.endpoint_url = formatMeta(format).defaultEndpoint;
+	}
+
+	function openAdd() {
+		editingId = null;
+		draft = newScrobbler();
+		dialogOpen = true;
+	}
+
+	function openEdit(s: Scrobbler) {
+		editingId = s.id;
+		draft = structuredClone($state.snapshot(s));
+		dialogOpen = true;
+	}
+
+	function commitDraft() {
+		if (editingId === null) {
+			config.scrobblers = [...config.scrobblers, draft];
+		} else {
+			config.scrobblers = config.scrobblers.map((s) =>
+				s.id === editingId ? draft : s,
+			);
+		}
+		dialogOpen = false;
 	}
 
 	async function save() {
@@ -116,7 +194,7 @@
 		try {
 			const savedConfig = await invoke<Config>("load_config");
 			config = savedConfig;
-			console.log("saved:", config)
+			console.log("saved:", config);
 		} catch (err) {
 			console.error("load_config unavailable:", err);
 		}
@@ -125,7 +203,9 @@
 
 <main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-8 text-sm">
 	<header class="flex flex-col gap-1">
-		<h1 class="text-foreground text-lg font-semibold tracking-tight lowercase">
+		<h1
+			class="text-foreground text-lg font-semibold tracking-tight lowercase"
+		>
 			dotsong settings
 		</h1>
 	</header>
@@ -150,81 +230,100 @@
 
 	<section class="flex flex-col gap-4">
 		<div class="flex items-baseline justify-between">
-			<h2 class="text-foreground text-sm font-semibold">scrobbling targets</h2>
-			{#if config.scrobblers.length > 0}
-				<span class="text-muted-foreground text-xs tabular-nums">
-					{config.scrobblers.length} configured
-				</span>
-			{/if}
+			<h2 class="text-foreground text-sm font-semibold">
+				scrobbling targets
+			</h2>
+			<div class="flex items-center gap-3">
+				{#if config.scrobblers.length > 0}
+					<span class="text-muted-foreground text-xs tabular-nums">
+						{config.scrobblers.length} configured
+					</span>
+				{/if}
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					class="rounded-md text-xs"
+					onclick={openAdd}
+				>
+					<PlusIcon data-icon="inline-start" />
+					add
+				</Button>
+			</div>
 		</div>
 
 		{#if config.scrobblers.length > 0}
 			<ul class="border-border divide-border divide-y border-y">
 				{#each config.scrobblers as s (s.id)}
-					<li class="grid grid-cols-[1fr_auto] items-start gap-x-3 py-3">
-						<div class="flex min-w-0 flex-col gap-2">
-							<div class="flex items-center gap-2">
-								<ToggleGroup.Root
-									type="single"
-									value={s.format}
-									onValueChange={(v) => changeFormat(s, v)}
-									variant="outline"
-									size="sm"
-									aria-label="format"
-									class="shrink-0"
-								>
-									<ToggleGroup.Item value="LastFM">last.fm</ToggleGroup.Item>
-									<ToggleGroup.Item value="ListenBrainz">listenbrainz</ToggleGroup.Item>
-								</ToggleGroup.Root>
-								<Input
-									bind:value={s.endpoint_url}
-									aria-label="endpoint url"
-									class="h-7 min-w-0 flex-1 rounded-md font-mono text-xs"
-									placeholder="https://..."
-									spellcheck="false"
-									autocomplete="off"
-								/>
-							</div>
-							<InputGroup.Root class="h-7 rounded-md">
-								<InputGroup.Addon align="inline-start" class="px-2">
-									<InputGroup.Text class="text-xs">
-										{formatMeta(s.format).keyLabel}
-									</InputGroup.Text>
-								</InputGroup.Addon>
-								<InputGroup.Input
-									type={s.revealed ? "text" : "password"}
-									bind:value={s.api_key}
-									placeholder="paste here"
-									spellcheck="false"
-									autocomplete="off"
-									class="font-mono text-xs"
-								/>
-								<InputGroup.Addon align="inline-end" class="px-1">
-									<InputGroup.Button
-										size="icon-xs"
-										onclick={() => (s.revealed = !s.revealed)}
-										disabled={!s.api_key}
-										aria-label={s.revealed ? "hide key" : "show key"}
+					<li class="flex items-start justify-between gap-3 py-2.5">
+						<div class="flex min-w-0 flex-1 flex-col gap-1.5">
+							<div
+								class="flex flex-wrap items-center gap-x-2 gap-y-1"
+							>
+								{#if s.id}
+									<span
+										class="text-foreground truncate text-sm font-medium"
+										title={s.id}
 									>
-										{#if s.revealed}
-											<EyeOffIcon />
-										{:else}
-											<EyeIcon />
-										{/if}
-									</InputGroup.Button>
-								</InputGroup.Addon>
-							</InputGroup.Root>
+										{s.id}
+									</span>
+								{:else}
+									<span
+										class="text-muted-foreground text-sm italic"
+										>unnamed</span
+									>
+								{/if}
+								<Badge
+									variant="secondary"
+									class="shrink-0 text-xs"
+								>
+									{formatMeta(s.format).label}
+								</Badge>
+								{#if s.api_key}
+									<Badge
+										variant="outline"
+										class="shrink-0 text-xs font-normal text-emerald-600 dark:text-emerald-400"
+									>
+										key set
+									</Badge>
+								{:else}
+									<Badge
+										variant="outline"
+										class="text-muted-foreground shrink-0 text-xs font-normal italic"
+									>
+										no key
+									</Badge>
+								{/if}
+							</div>
+							<span
+								class="text-muted-foreground truncate font-mono text-xs"
+								title={s.endpoint_url}
+							>
+								{s.endpoint_url}
+							</span>
 						</div>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							class="text-muted-foreground hover:text-foreground hover:bg-destructive/10 mt-1.5 size-7 shrink-0 rounded-md"
-							onclick={() => removeScrobbler(s.id)}
-							aria-label="remove target"
-						>
-							<XIcon />
-						</Button>
+						<div class="flex shrink-0 items-center gap-1">
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								class="text-muted-foreground hover:text-foreground rounded-md"
+								onclick={() => openEdit(s)}
+								aria-label="edit target"
+							>
+								<PencilIcon />
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								class="text-muted-foreground hover:text-foreground hover:bg-destructive/10 rounded-md"
+								onclick={() => removeScrobbler(s.id)}
+								aria-label="remove target"
+							>
+								<XIcon />
+							</Button>
+						</div>
 					</li>
 				{/each}
 			</ul>
@@ -233,46 +332,153 @@
 				<Empty.Header>
 					<Empty.Title>no targets yet</Empty.Title>
 					<Empty.Description>
-						add a last.fm or listenbrainz target below to start scrobbling.
+						add a last.fm or listenbrainz target to start
+						scrobbling.
 					</Empty.Description>
 				</Empty.Header>
 			</Empty.Root>
 		{/if}
-
-		<div class="flex flex-wrap items-center gap-2">
-			<span class="text-muted-foreground text-xs">add:</span>
-			{#each FORMATS as f (f.value)}
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					class="rounded-md text-xs"
-					onclick={() => addScrobbler(f.value)}
-				>
-					<PlusIcon data-icon="inline-start" />
-					{f.label}
-				</Button>
-			{/each}
-			<span class="text-muted-foreground ml-auto text-xs italic">
-				pre-fills the default endpoint url
-			</span>
-		</div>
 	</section>
 
 	<Separator />
 
 	<footer class="flex items-center justify-end gap-2">
 		<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
-			<RotateCcwIcon data-icon="inline-start" />
 			reset
 		</Button>
 		<Button variant="secondary" class="rounded-md text-xs" onclick={close}>
-			<!-- <SaveIcon data-icon="inline-start" /> -->
 			cancel
 		</Button>
-		<Button class="rounded-md text-xs w-12" onclick={save}>
-			<!-- <SaveIcon data-icon="inline-start" /> -->
-			ok
-		</Button>
+		<Button class="rounded-md text-xs w-12" onclick={save}>ok</Button>
 	</footer>
 </main>
+
+<Dialog.Root bind:open={dialogOpen}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title
+				>{editingId === null
+					? "add scrobbler"
+					: "edit scrobbler"}</Dialog.Title
+			>
+			<Dialog.Description>
+				configure a scrobbling target. the format determines which api
+				to talk to.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Field.FieldGroup>
+			<Field.Field data-invalid={nameError !== null}>
+				<Field.FieldLabel for="scrobbler-name">name</Field.FieldLabel>
+				<Input
+					id="scrobbler-name"
+					bind:value={draft.id}
+					placeholder="e.g. personal, work"
+					spellcheck="false"
+					autocomplete="off"
+					class="text-xs"
+					aria-invalid={nameError !== null}
+				/>
+				<Field.FieldDescription>
+					a unique identifier for this target. no spaces.
+				</Field.FieldDescription>
+				{#if nameError}
+					<Field.FieldError>{nameError}</Field.FieldError>
+				{/if}
+			</Field.Field>
+			<Field.Field>
+				<Field.FieldLabel>format</Field.FieldLabel>
+				<ToggleGroup.Root
+					type="single"
+					value={draft.format}
+					onValueChange={(v) => changeFormat(draft, v)}
+					variant="outline"
+					size="sm"
+					aria-label="format"
+				>
+					<ToggleGroup.Item value="LastFM">last.fm</ToggleGroup.Item>
+					<ToggleGroup.Item value="ListenBrainz"
+						>listenbrainz</ToggleGroup.Item
+					>
+				</ToggleGroup.Root>
+			</Field.Field>
+			<Field.Field>
+				<Field.FieldLabel for="endpoint-url"
+					>endpoint url</Field.FieldLabel
+				>
+				<Input
+					id="endpoint-url"
+					bind:value={draft.endpoint_url}
+					placeholder="https://..."
+					spellcheck="false"
+					autocomplete="off"
+					class="font-mono text-xs"
+				/>
+			</Field.Field>
+			{#if showLastFmLogin}
+				<Field.Field>
+					<Button
+						type="button"
+						variant="default"
+						class="w-full"
+						onclick={loginWithLastFm}
+					>
+						<LogInIcon data-icon="inline-start" />
+						login with last.fm
+					</Button>
+					<Field.FieldDescription>
+						authenticate with last.fm to enable scrobbling
+					</Field.FieldDescription>
+				</Field.Field>
+			{:else}
+				<Field.Field>
+					<Field.FieldLabel for="api-key">
+						{formatMeta(draft.format).keyLabel}
+					</Field.FieldLabel>
+					<InputGroup.Root>
+						<InputGroup.Input
+							id="api-key"
+							type={draft.revealed ? "text" : "password"}
+							bind:value={draft.api_key}
+							placeholder="paste here"
+							spellcheck="false"
+							autocomplete="off"
+							class="font-mono text-xs"
+						/>
+						<InputGroup.Addon align="inline-end" class="px-1">
+							<InputGroup.Button
+								size="icon-xs"
+								onclick={() => (draft.revealed = !draft.revealed)}
+								disabled={!draft.api_key}
+								aria-label={draft.revealed
+									? "hide key"
+									: "show key"}
+							>
+								{#if draft.revealed}
+									<EyeOffIcon />
+								{:else}
+									<EyeIcon />
+								{/if}
+							</InputGroup.Button>
+						</InputGroup.Addon>
+					</InputGroup.Root>
+				</Field.Field>
+			{/if}
+		</Field.FieldGroup>
+		<Dialog.Footer>
+			<Button
+				variant="ghost"
+				class="rounded-md text-xs"
+				onclick={() => (dialogOpen = false)}
+			>
+				cancel
+			</Button>
+			<Button
+				class="rounded-md text-xs"
+				onclick={commitDraft}
+				disabled={nameError !== null}
+			>
+				{editingId === null ? "add" : "save"}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
