@@ -61,18 +61,6 @@ struct AppState {
     rpc: Arc<Mutex<Option<discord_presence::Client>>>,
 }
 
-// for windows and linux
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-fn get_now_playing_info() -> Option<MediaInfo> {
-    let now_playing = nowhear::MediaSourceBuilder::new().build();
-    nowhear::MediaEvent::get_current_media_info().map(|info| nowhear::MediaEvent {
-        title: info.title,
-        album: info.album,
-        artist: info.artist,
-        elapsed_time: info.elapsed_time.map(|t| t as u32),
-        cover_artwork: None, // No cover artwork support for nowhear
-    })
-}
 
 impl AppState {
     fn stop_discord_presence(&self) {
