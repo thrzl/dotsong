@@ -19,6 +19,9 @@ pub struct MediaCenter {
     track_tx: broadcast::Sender<TrackUpdateEvent>,
     scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    #[cfg(target_os = "macos")]
+    macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
+    deezer_client: Arc<models::deezer_api::DeezerClient>,
 }
 
 impl MediaCenter {
@@ -37,6 +40,9 @@ impl MediaCenter {
             track_tx: tx,
             scrobblers: Arc::new(Mutex::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            macos_listener: Arc::new(Mutex::new(None)),
+            deezer_client: Arc::new(models::deezer_api::DeezerClient::new(100)),
         }
     }
 
@@ -74,121 +80,110 @@ impl MediaCenter {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn start_media_poller(self: Arc<Self>) {
+        let source_fut = nowhear::MediaSourceBuilder::new().build();
         tauri::async_runtime::spawn(async move {
-            let now_playing = nowhear::MediaSourceBuilder::new().build().await.unwrap();
-            let mut now_playing_stream = now_playing.event_stream().await.unwrap();
-            let mut deezer_client = models::deezer_api::DeezerClient::new(100);
-            while let Some(event) = now_playing_stream.next().await {
-                let media_info = match event {
-                    nowhear::MediaEvent::TrackChanged { player_name, track } => {
-                        let player = now_playing.get_player(player_name).await.unwrap();
-                        let media_info = MediaInfo {
-                            title: Some(track.title),
-                            album: track.album,
-                            artist: Some(track.artist.join(", ")),
-                            elapsed_time: None,
-                            cover_artwork: track.art_url,
-                            is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                            duration: track.duration.map(|t| t.as_secs() as u32),
-                            isrc: None,
-                        };
-                        let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx
-                            .send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
-                            .unwrap();
-                        enriched_track
-                    }
-                    nowhear::MediaEvent::PositionChanged {
-                        player_name,
-                        position,
-                    } => {
-                        let player = now_playing.get_player(player_name).await.unwrap();
-                        let track = player.current_track;
-                        let media_info = if let Some(track) = track {
-                            MediaInfo {
-                                title: Some(track.title),
-                                album: track.album,
-                                artist: Some(track.artist.join(", ")),
-                                elapsed_time: Some(position.as_secs() as u32),
-                                cover_artwork: track.art_url,
-                                is_playing: player.playback_state
-                                    == nowhear::PlaybackState::Playing,
-                                duration: track.duration.map(|t| t.as_secs() as u32),
-                                isrc: None,
-                            }
-                        } else {
-                            MediaInfo {
-                                title: None,
-                                album: None,
-                                artist: None,
-                                elapsed_time: None,
-                                cover_artwork: None,
-                                is_playing: player.playback_state
-                                    == nowhear::PlaybackState::Playing,
-                                duration: None,
-                                isrc: None,
-                            }
-                        };
-                        let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx
-                            .send(TrackUpdateEvent::PlaybackStateChange(
-                                enriched_track.clone(),
-                            ))
-                            .unwrap();
-                        enriched_track
-                    }
-                    nowhear::MediaEvent::StateChanged { player_name, state } => {
-                        let player = now_playing.get_player(player_name).await.unwrap();
-                        let track = player.current_track;
-                        let media_info = if let Some(track) = track {
-                            MediaInfo {
-                                title: Some(track.title),
-                                album: track.album,
-                                artist: Some(track.artist.join(", ")),
-                                elapsed_time: player.position.map(|p| p.as_secs() as u32),
-                                cover_artwork: track.art_url,
-                                is_playing: player.playback_state
-                                    == nowhear::PlaybackState::Playing,
-                                duration: track.duration.map(|d| d.as_secs() as u32),
-                                isrc: None,
-                            }
-                        } else {
-                            MediaInfo {
-                                title: None,
-                                album: None,
-                                artist: None,
-                                elapsed_time: None,
-                                cover_artwork: None,
-                                is_playing: player.playback_state
-                                    == nowhear::PlaybackState::Playing,
-                                duration: None,
-                                isrc: None,
-                            }
-                        };
-                        let enriched_track = deezer_client.enrich_media_info(&media_info).await;
-                        self.track_tx
-                            .send(TrackUpdateEvent::PlaybackStateChange(
-                                enriched_track.clone(),
-                            ))
-                            .unwrap();
-                        enriched_track
-                    }
-                    _ => continue,
-                };
-
-                // asynchronous enriching of media info with Deezer API
-                // let media_info_clone = media_info.clone();
-
-                {
-                    let mut last_track = self.last_track.lock();
-                    *last_track = Some(media_info.clone());
+            let now_playing = match source_fut.await {
+                Ok(np) => np,
+                Err(e) => {
+                    eprintln!("failed to build nowhear media source: {e}");
+                    return;
                 }
-
-                self.track_tx
-                    .send(TrackUpdateEvent::NewTrack(media_info.clone()))
-                    .unwrap();
+            };
+            let mut stream = match now_playing.event_stream().await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("failed to open nowhear event stream: {e}");
+                    return;
+                }
+            };
+            while let Some(event) = stream.next().await {
+                let Some(media_info) = Self::build_media_info(&now_playing, event).await else {
+                    continue;
+                };
+                let enriched = self.deezer_client.enrich_media_info(&media_info).await;
+                if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
+                    let _ = self
+                        .track_tx
+                        .send(TrackUpdateEvent::PlaybackStateChange(enriched));
+                    continue;
+                }
+                *self.last_track.lock() = Some(enriched.clone());
+                let _ = self.track_tx.send(TrackUpdateEvent::NewTrack(enriched));
             }
         });
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    async fn build_media_info(
+        now_playing: &nowhear::MediaSource,
+        event: nowhear::MediaEvent,
+    ) -> Option<MediaInfo> {
+        match event {
+            nowhear::MediaEvent::TrackChanged { player_name, track } => {
+                let player = now_playing.get_player(player_name).await.ok()?;
+                Some(MediaInfo {
+                    title: Some(track.title),
+                    album: track.album,
+                    artist: Some(track.artist.join(", ")),
+                    elapsed_time: None,
+                    cover_artwork: track.art_url,
+                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                    duration: track.duration.map(|t| t.as_secs() as u32),
+                    isrc: None,
+                })
+            }
+            nowhear::MediaEvent::PositionChanged { player_name, position } => {
+                let player = now_playing.get_player(player_name).await.ok()?;
+                Some(match player.current_track {
+                    Some(track) => MediaInfo {
+                        title: Some(track.title),
+                        album: track.album,
+                        artist: Some(track.artist.join(", ")),
+                        elapsed_time: Some(position.as_secs() as u32),
+                        cover_artwork: track.art_url,
+                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                        duration: track.duration.map(|t| t.as_secs() as u32),
+                        isrc: None,
+                    },
+                    None => MediaInfo {
+                        title: None,
+                        album: None,
+                        artist: None,
+                        elapsed_time: None,
+                        cover_artwork: None,
+                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                        duration: None,
+                        isrc: None,
+                    },
+                })
+            }
+            nowhear::MediaEvent::StateChanged { player_name, state: _ } => {
+                let player = now_playing.get_player(player_name).await.ok()?;
+                Some(match player.current_track {
+                    Some(track) => MediaInfo {
+                        title: Some(track.title),
+                        album: track.album,
+                        artist: Some(track.artist.join(", ")),
+                        elapsed_time: player.position.map(|p| p.as_secs() as u32),
+                        cover_artwork: track.art_url,
+                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                        duration: track.duration.map(|d| d.as_secs() as u32),
+                        isrc: None,
+                    },
+                    None => MediaInfo {
+                        title: None,
+                        album: None,
+                        artist: None,
+                        elapsed_time: None,
+                        cover_artwork: None,
+                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                        duration: None,
+                        isrc: None,
+                    },
+                })
+            }
+            _ => None,
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -197,13 +192,15 @@ impl MediaCenter {
         let tx = self.track_tx.clone();
         let now_playing = media_remote::NowPlayingPerl::new();
         let last_track_ptr = self.last_track.clone();
+        let deezer_client = self.deezer_client.clone();
 
-        now_playing.subscribe(move |event| {
+        let _token = now_playing.subscribe(move |event| {
+            println!("received event: {:?}", event);
             let event = event.clone();
             let last_track_ptr = last_track_ptr.clone();
             let tx = tx.clone();
+            let deezer_client = deezer_client.clone();
             tauri::async_runtime::spawn(async move {
-                let mut deezer_client = models::deezer_api::DeezerClient::new(100);
                 let event = event.clone();
                 let Some(media) = event.clone() else { return };
                 if media.title.is_none() && media.album.is_none() {
@@ -243,6 +240,8 @@ impl MediaCenter {
                     .unwrap();
             });
         });
+
+        *self.macos_listener.lock() = Some(now_playing);
     }
 
     pub fn start_scrobbling_task(self: Arc<Self>) {

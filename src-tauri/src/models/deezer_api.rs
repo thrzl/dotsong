@@ -39,7 +39,7 @@ impl DeezerClient {
         }
     }
 
-    pub async fn track_search(&mut self, track: &models::MediaInfo) -> Option<DeezerTrack> {
+    pub async fn track_search(&self, track: &models::MediaInfo) -> Option<DeezerTrack> {
         let clean_title = Regex::new(r"\(?(feat\.|ft\.)\s.+\)?")
             .unwrap()
             .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
@@ -97,7 +97,7 @@ impl DeezerClient {
         track
     }
 
-    pub async fn enrich_media_info(&mut self, media_info: &models::MediaInfo) -> models::MediaInfo {
+    pub async fn enrich_media_info(&self, media_info: &models::MediaInfo) -> models::MediaInfo {
         let enriched_track = match self.track_search(media_info).await {
             Some(track) => track,
             None => return media_info.clone(),
