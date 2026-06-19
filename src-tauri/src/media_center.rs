@@ -70,14 +70,6 @@ impl MediaCenter {
         }
     }
 
-    fn should_refresh_tray_menu(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
-        let Some(previous) = previous else {
-            return true;
-        };
-
-        previous.title != current.title || previous.artist != current.artist
-    }
-
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn start_media_poller(self: Arc<Self>) {
         let source_fut = nowhear::MediaSourceBuilder::new().build();
