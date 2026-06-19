@@ -86,6 +86,7 @@ impl AppState {
                     let track = match track_event {
                         TrackUpdateEvent::NewTrack(info) => info,
                         TrackUpdateEvent::PlaybackStateChange(_) => continue,
+                        _ => continue,
                     };
                     let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
                     let now_playing_artist =
@@ -143,6 +144,7 @@ impl AppState {
                     let media_info = match track_event {
                         TrackUpdateEvent::NewTrack(info) => info,
                         TrackUpdateEvent::PlaybackStateChange(info) => info,
+                        _ => continue,
                     };
                     if !media_info.is_playing {
                         client.clear_activity().unwrap();

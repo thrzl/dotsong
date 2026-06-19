@@ -235,7 +235,7 @@ impl MediaCenter {
         let last_track_ptr = self.last_track.clone();
         let deezer_client = self.deezer_client.clone();
 
-        let _token = now_playing.subscribe(move |event| {
+        now_playing.subscribe(move |event| {
             println!("received event: {:?}", event);
             let event = event.clone();
             let last_track_ptr = last_track_ptr.clone();
@@ -281,6 +281,7 @@ impl MediaCenter {
                     .unwrap();
             });
         });
+        self.start_position_ticker();
 
         *self.macos_listener.lock() = Some(now_playing);
     }
