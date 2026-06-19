@@ -1,19 +1,21 @@
 mod config;
+mod lastfm_auth;
 mod media_center;
 mod models;
 
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 use media_center::{MediaCenter, TrackUpdateEvent};
 
-use tauri::State;
 use tauri::async_runtime::JoinHandle;
+use tauri::Manager;
+use tauri::State;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIcon,
-    Manager,
 };
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -27,7 +29,34 @@ fn load_config(state: tauri::State<'_, AppState>) -> config::Config {
 }
 
 #[tauri::command]
-async fn save_config(state: tauri::State<'_, AppState>, config: config::Config) -> Result<(), String> {
+async fn start_lastfm_auth(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let token = lastfm_auth::fetch_token().await?;
+    let auth_url = lastfm_auth::build_auth_url(&token);
+    app.opener()
+        .open_url(&auth_url, None::<&str>)
+        .map_err(|e| format!("failed to open browser: {e}"))?;
+    *state.pending_auth.lock() = Some(token);
+    Ok(())
+}
+
+#[tauri::command]
+async fn complete_lastfm_auth(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let token = state
+        .pending_auth
+        .lock()
+        .take()
+        .ok_or_else(|| "no pending authorization".to_string())?;
+    lastfm_auth::exchange_token(&token).await
+}
+
+#[tauri::command]
+async fn save_config(
+    state: tauri::State<'_, AppState>,
+    config: config::Config,
+) -> Result<(), String> {
     {
         let mut config_lock = state.config.lock();
         *config_lock = config.clone();
@@ -48,7 +77,9 @@ async fn save_config(state: tauri::State<'_, AppState>, config: config::Config) 
     }
     state.media_center.set_scrobblers(config.scrobblers.clone());
     println!("writing config");
-    tokio::fs::write(config_path, config_str).await.map_err(|e| format!("failed to write config file: {e}"))
+    tokio::fs::write(config_path, config_str)
+        .await
+        .map_err(|e| format!("failed to write config file: {e}"))
 }
 
 struct AppState {
@@ -59,8 +90,8 @@ struct AppState {
     config_path: std::path::PathBuf,
     presence_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     rpc: Arc<Mutex<Option<discord_presence::Client>>>,
+    pending_auth: Arc<Mutex<Option<lastfm_auth::AuthToken>>>,
 }
-
 
 impl AppState {
     fn stop_discord_presence(&self) {
@@ -103,7 +134,8 @@ impl AppState {
                     )
                     .unwrap();
                     let settings =
-                        MenuItem::with_id(&app, "settings", "settings", true, None::<&str>).unwrap();
+                        MenuItem::with_id(&app, "settings", "settings", true, None::<&str>)
+                            .unwrap();
                     let quit = MenuItem::with_id(&app, "quit", "quit", true, None::<&str>).unwrap();
                     let menu = Menu::with_items(&app, &[&now_playing, &settings, &quit]).unwrap();
 
@@ -149,38 +181,39 @@ impl AppState {
                         continue;
                     }
                     if media_info.title.is_some() && media_info.artist.is_some() {
-                        client.set_activity(|p| {
-                            p.activity_type(discord_presence::models::ActivityType::Listening)
-                                .status_display(discord_presence::models::DisplayType::State)
-                                .state(media_info.artist.clone().unwrap_or_default())
-                                .details(media_info.title.clone().unwrap_or_default())
-                                .assets(|assets| {
-                                    let assets = assets.large_image(
-                                        &media_info
-                                            .cover_artwork
-                                            .clone()
-                                            .unwrap_or("default".to_string()),
-                                    );
-                                    if let Some(album_name) = media_info.album.clone() {
-                                        assets.large_text(album_name)
-                                    } else {
-                                        assets
-                                    }
-                                })
-                                .timestamps(|timestamps| {
-                                    if let Some(elapsed_time) = media_info.elapsed_time {
-                                        let start_time = chrono::Utc::now()
-                                            - chrono::Duration::seconds(elapsed_time as i64);
-                                        timestamps.start(start_time.timestamp() as u64).end(
-                                            media_info.duration.unwrap() as u64
-                                                + start_time.timestamp() as u64,
-                                        )
-                                    } else {
-                                        timestamps
-                                    }
-                                })
-                        })
-                        .unwrap();
+                        client
+                            .set_activity(|p| {
+                                p.activity_type(discord_presence::models::ActivityType::Listening)
+                                    .status_display(discord_presence::models::DisplayType::State)
+                                    .state(media_info.artist.clone().unwrap_or_default())
+                                    .details(media_info.title.clone().unwrap_or_default())
+                                    .assets(|assets| {
+                                        let assets = assets.large_image(
+                                            &media_info
+                                                .cover_artwork
+                                                .clone()
+                                                .unwrap_or("default".to_string()),
+                                        );
+                                        if let Some(album_name) = media_info.album.clone() {
+                                            assets.large_text(album_name)
+                                        } else {
+                                            assets
+                                        }
+                                    })
+                                    .timestamps(|timestamps| {
+                                        if let Some(elapsed_time) = media_info.elapsed_time {
+                                            let start_time = chrono::Utc::now()
+                                                - chrono::Duration::seconds(elapsed_time as i64);
+                                            timestamps.start(start_time.timestamp() as u64).end(
+                                                media_info.duration.unwrap() as u64
+                                                    + start_time.timestamp() as u64,
+                                            )
+                                        } else {
+                                            timestamps
+                                        }
+                                    })
+                            })
+                            .unwrap();
                     } else {
                         client.clear_activity().unwrap();
                     }
@@ -239,7 +272,8 @@ pub fn run() {
                         .resizable(false)
                         .decorations(true)
                         .visible(true)
-                        .focused(true).always_on_top(true)
+                        .focused(true)
+                        .always_on_top(true)
                         .build()
                         .unwrap();
                         window.set_always_on_top(false).unwrap();
@@ -247,20 +281,27 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
-            let app_config_dir = dirs::config_dir().expect("failed to resolve config directory").join(app.config().identifier.clone());
-            std::fs::create_dir_all(&app_config_dir).expect("failed to ensure config directory exists");
+            let app_config_dir = dirs::config_dir()
+                .expect("failed to resolve config directory")
+                .join(app.config().identifier.clone());
+            std::fs::create_dir_all(&app_config_dir)
+                .expect("failed to ensure config directory exists");
             let config = {
                 // read app_config_dir/config.json if it exists, otherwise create it with default config
                 let config_path = app_config_dir.join("dotsong_config.json");
                 if config_path.exists() {
-                    let config_str = std::fs::read_to_string(config_path).expect("failed to read config file");
+                    let config_str =
+                        std::fs::read_to_string(config_path).expect("failed to read config file");
                     serde_json::from_str(&config_str).expect("failed to parse config file")
                 } else {
                     let default_config = config::Config::default();
-                    let config_str = serde_json::to_string_pretty(&default_config).expect("failed to serialize default config");
-                    std::fs::write(config_path, config_str).expect("failed to write default config file");
+                    let config_str = serde_json::to_string_pretty(&default_config)
+                        .expect("failed to serialize default config");
+                    std::fs::write(config_path, config_str)
+                        .expect("failed to write default config file");
                     default_config
-            }};
+                }
+            };
             let app_state = AppState {
                 media_center: Arc::new(MediaCenter::new(config.scrobblers.clone())),
                 tray: Arc::new(Mutex::new(tray)),
@@ -269,6 +310,7 @@ pub fn run() {
                 config_path: app_config_dir.join("dotsong_config.json"),
                 presence_task: Arc::new(Mutex::new(None)),
                 rpc: Arc::new(Mutex::new(None)),
+                pending_auth: Arc::new(Mutex::new(None)),
             };
 
             app_state.media_center.clone().start_media_poller();
@@ -283,7 +325,13 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, save_config, load_config])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            save_config,
+            load_config,
+            start_lastfm_auth,
+            complete_lastfm_auth
+        ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
     program.run(|_app, event| match event {

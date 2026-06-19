@@ -16,6 +16,7 @@
 	import EyeOffIcon from "@lucide/svelte/icons/eye-off";
 	import PencilIcon from "@lucide/svelte/icons/pencil";
 	import LogInIcon from "@lucide/svelte/icons/log-in";
+	import LoaderIcon from "@lucide/svelte/icons/loader-circle";
 	import { onMount } from "svelte";
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -88,7 +89,12 @@
 	let draft = $state<Scrobbler>(newScrobbler());
 
 	$effect(() => {
-		if (!dialogOpen) draft.revealed = false;
+		if (!dialogOpen) {
+			draft.revealed = false;
+			authStarted = false;
+			authBusy = false;
+			authError = null;
+		}
 	});
 
 	$effect(() => {
@@ -119,9 +125,36 @@
 		draft.format === "LastFM" && isOfficialLastFm(draft.endpoint_url),
 	);
 
-	function loginWithLastFm() {
-		// TODO: open last.fm auth flow
-		console.log("login with last.fm (not yet implemented)");
+	let authStarted = $state(false);
+	let authBusy = $state(false);
+	let authError = $state<string | null>(null);
+
+	async function startAuth() {
+		authBusy = true;
+		authError = null;
+		try {
+			await invoke("start_lastfm_auth");
+			authStarted = true;
+		} catch (err) {
+			authError = String(err);
+		} finally {
+			authBusy = false;
+		}
+	}
+
+	async function completeAuth() {
+		authBusy = true;
+		authError = null;
+		try {
+			const sessionKey = await invoke<string>("complete_lastfm_auth");
+			draft.api_key = sessionKey;
+			authStarted = false;
+		} catch (err) {
+			authError = String(err);
+			authStarted = false;
+		} finally {
+			authBusy = false;
+		}
 	}
 
 	function reset() {
@@ -415,19 +448,33 @@
 				/>
 			</Field.Field>
 			{#if showLastFmLogin}
-				<Field.Field>
+				<Field.Field data-invalid={authError !== null}>
 					<Button
 						type="button"
 						variant="default"
 						class="w-full"
-						onclick={loginWithLastFm}
+						onclick={authStarted ? completeAuth : startAuth}
+						disabled={authBusy}
 					>
-						<LogInIcon data-icon="inline-start" />
-						login with last.fm
+						{#if authBusy}
+							<LoaderIcon data-icon="inline-start" class="animate-spin" />
+							authorizing...
+						{:else if authStarted}
+							continue
+						{:else}
+							<LogInIcon data-icon="inline-start" />
+							login with last.fm
+						{/if}
 					</Button>
-					<Field.FieldDescription>
-						authenticate with last.fm to enable scrobbling
-					</Field.FieldDescription>
+					{#if authError}
+						<Field.FieldError>{authError}</Field.FieldError>
+					{:else}
+						<Field.FieldDescription>
+							{authStarted
+								? "authorize in your browser, then click continue"
+								: "authenticate with last.fm to enable scrobbling"}
+						</Field.FieldDescription>
+					{/if}
 				</Field.Field>
 			{:else}
 				<Field.Field>

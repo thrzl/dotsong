@@ -39,6 +39,7 @@ moka = { version = "0.12.15", features = ["future"] }
 regex = "1.12.4"
 dirs = "6.0.0"
 futures = "0.3.32"
+last-fm-rs = "20251214.0.2"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
