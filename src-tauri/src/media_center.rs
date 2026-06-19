@@ -35,10 +35,6 @@ impl MediaCenter {
         let mut scrobblers_lock = self.scrobblers.lock();
         *scrobblers_lock = scrobblers;
     }
-    pub fn get_scrobblers(&self) -> Vec<Scrobbler> {
-        let scrobblers_lock = self.scrobblers.lock();
-        scrobblers_lock.clone()
-    }
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
         let (tx, _) = broadcast::channel(1);
         MediaCenter {
@@ -252,12 +248,11 @@ impl MediaCenter {
                     return;
                 }
 
-                
                 let media_info = MediaInfo {
                     title: media.title,
                     album: media
-                    .album
-                    .map(|album| Self::sanitize_apple_music_album_name(&album)),
+                        .album
+                        .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
                     cover_artwork: None,
@@ -265,14 +260,16 @@ impl MediaCenter {
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
                 };
-                
+
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
                 let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
 
                 if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track.clone()))
-                        .unwrap();
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(
+                        enriched_track.clone(),
+                    ))
+                    .unwrap();
                 } else {
                     tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                         .unwrap();
@@ -292,16 +289,18 @@ impl MediaCenter {
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
         println!("starting scrobbling task");
-        let scrobblers = self.get_scrobblers();
+        let scrobblers = self.scrobblers.clone();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
         println!(
             "spawning scrobbling task with {} scrobblers",
-            scrobblers.len()
+            scrobblers.lock().len()
         );
         *task_guard = Some(tauri::async_runtime::spawn(async move {
+            let scrobblers = scrobblers.clone();
             let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
             loop {
+                let scrobblers = scrobblers.lock().clone();
                 let event = match rx.recv().await {
                     Ok(event) => event,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -311,7 +310,7 @@ impl MediaCenter {
                 match event {
                     TrackUpdateEvent::NewTrack(track) => {
                         // when it's a new track, we do now playing
-                        for scrobbler in &scrobblers {
+                        for scrobbler in &scrobblers.clone() {
                             scrobbler.now_playing(&track).await;
                         }
                     }
@@ -333,11 +332,11 @@ impl MediaCenter {
                             if already_scrobbled {
                                 continue;
                             }
-                            for scrobbler in &scrobblers {
+                            for scrobbler in &scrobblers.clone() {
                                 scrobbler.scrobble(&track).await;
                             }
                         } else if last_track.is_none() {
-                            for scrobbler in &scrobblers {
+                            for scrobbler in &scrobblers.clone() {
                                 scrobbler.now_playing(&track).await;
                             }
                         }
