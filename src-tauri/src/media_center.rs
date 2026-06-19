@@ -8,6 +8,8 @@ use tokio::{sync::Notify, time::Duration};
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use futures::StreamExt;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use nowhear::MediaSource;
 
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
@@ -98,6 +100,8 @@ impl MediaCenter {
                     continue;
                 };
                 let enriched = self.deezer_client.enrich_media_info(&media_info).await;
+                self.last_track.lock().replace(enriched.clone());
+                self.play_state_notify.notify_one();
                 if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
                     let _ = self
                         .track_tx
@@ -189,7 +193,6 @@ impl MediaCenter {
         }
     }
 
-    #[cfg(target_os = "macos")]
     fn start_position_ticker(self: &Arc<Self>) {
         let tx = self.track_tx.clone();
         let last_track = self.last_track.clone();
@@ -234,6 +237,7 @@ impl MediaCenter {
         let now_playing = media_remote::NowPlayingPerl::new();
         let last_track_ptr = self.last_track.clone();
         let deezer_client = self.deezer_client.clone();
+        let play_state_notify = self.play_state_notify.clone();
 
         now_playing.subscribe(move |event| {
             println!("received event: {:?}", event);
@@ -241,6 +245,7 @@ impl MediaCenter {
             let last_track_ptr = last_track_ptr.clone();
             let tx = tx.clone();
             let deezer_client = deezer_client.clone();
+            let play_state_notify = play_state_notify.clone();
             tauri::async_runtime::spawn(async move {
                 let event = event.clone();
                 let Some(media) = event.clone() else { return };
@@ -264,24 +269,25 @@ impl MediaCenter {
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
                 let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
+                {
+                    let mut last_track = last_track_ptr.lock();
+                    *last_track = Some(enriched_track.clone());
+                }
+                if last_track_ptr.lock().as_ref().map_or(true, |p| p.is_playing != media_info.is_playing) {
+                    play_state_notify.notify_one();
+                }
+
 
                 if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
                         .unwrap();
                     return;
                 }
-                {
-                    {
-                        let mut last_track = last_track_ptr.lock();
-                        *last_track = Some(enriched_track.clone());
-                    }
-                }
-
                 tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                     .unwrap();
             });
         });
-        self.start_position_ticker();
+        self.clone().start_position_ticker();
 
         *self.macos_listener.lock() = Some(now_playing);
     }
