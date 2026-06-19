@@ -107,7 +107,7 @@ impl MediaCenter {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     async fn build_media_info(
-        now_playing: &nowhear::MediaSource,
+        now_playing: &impl nowhear::MediaSource,
         event: nowhear::MediaEvent,
     ) -> Option<MediaInfo> {
         match event {
