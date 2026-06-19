@@ -224,10 +224,12 @@ pub fn run() {
                         // create new settings window
                         if let Some(window) = app.get_webview_window("main") {
                             window.show().unwrap();
+                            window.set_always_on_top(true).unwrap();
                             window.set_focus().unwrap();
+                            window.set_always_on_top(false).unwrap();
                             return;
                         }
-                        tauri::WebviewWindowBuilder::new(
+                        let window = tauri::WebviewWindowBuilder::new(
                             app,
                             "main",
                             tauri::WebviewUrl::App("index.html".into()),
@@ -237,9 +239,10 @@ pub fn run() {
                         .resizable(false)
                         .decorations(true)
                         .visible(true)
-                        .focused(true)
+                        .focused(true).always_on_top(true)
                         .build()
                         .unwrap();
+                        window.set_always_on_top(false).unwrap();
                     }
                     _ => {}
                 })
