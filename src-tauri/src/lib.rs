@@ -46,6 +46,7 @@ async fn save_config(state: tauri::State<'_, AppState>, config: config::Config) 
             state.stop_discord_presence();
         }
     }
+    state.media_center.set_scrobblers(config.scrobblers.clone());
     println!("writing config");
     tokio::fs::write(config_path, config_str).await.map_err(|e| format!("failed to write config file: {e}"))
 }

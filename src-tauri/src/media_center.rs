@@ -16,7 +16,7 @@ pub struct MediaCenter {
     last_track: Arc<Mutex<Option<MediaInfo>>>,
     track_tx: broadcast::Sender<TrackUpdateEvent>,
     scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
-    scrobbling_task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 impl MediaCenter {
@@ -96,6 +96,7 @@ impl MediaCenter {
                     cover_artwork: None,
                     is_playing: media.is_playing.unwrap_or(false),
                     duration: media.duration.map(|t| t as u32),
+                    isrc: None
                 };
 
                 // asynchronous enriching of media info with Deezer API
@@ -103,6 +104,8 @@ impl MediaCenter {
                 let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
 
                 if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched_track) {
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
+                    .unwrap();
                     continue;
                 }
                 {
@@ -114,36 +117,61 @@ impl MediaCenter {
 
                 tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                     .unwrap();
-                if Self::should_refresh_tray_menu(self.last_track.lock().as_ref(), &enriched_track)
-                {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(enriched_track))
-                        .unwrap();
-                }
             }
         });
     }
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
+        println!("starting scrobbling task");
         let scrobblers = self.get_scrobblers();
         let mut rx = self.get_rx();
-        tauri::async_runtime::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                if let TrackUpdateEvent::PlaybackStateChange(track) = event {
-                    if track.elapsed_time.is_none() || track.duration.is_none() {
+        let mut task_guard = self.scrobbling_task_handle.lock();
+        println!("spawning scrobbling task with {} scrobblers", scrobblers.len());
+        *task_guard = Some(tauri::async_runtime::spawn(async move {
+            let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
+            loop {
+                let event = match rx.recv().await {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => continue,
+                };
+                let track = match event {
+                    TrackUpdateEvent::NewTrack(track) => track,
+                    TrackUpdateEvent::PlaybackStateChange(track) => track,
+                };
+                if track.elapsed_time.is_none() || track.duration.is_none() {
+                    continue;
+                }
+                let last_track = last_scrobble.lock().clone();
+                if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
+                    let already_scrobbled = if let Some(last_track) = last_track {
+                        // if the last scrobbled track was over 50%, we already did now playing
+                        last_track.title == track.title && last_track.album == track.album && (last_track.elapsed_time.unwrap() > last_track.duration.unwrap() / 2)
+                    } else {false};
+
+                    if already_scrobbled {
                         continue;
                     }
-                    if track.elapsed_time.unwrap() > track.duration.unwrap() / 2 {
-                        for scrobbler in &scrobblers {
-                            scrobbler.scrobble(&track).await;
-                        }
-                    } else {
-                        for scrobbler in &scrobblers {
-                            scrobbler.now_playing(&track).await;
-                        }
+                    for scrobbler in &scrobblers {
+                        scrobbler.scrobble(&track).await;
+                    }
+                } else {
+                    let already_scrobbled = if let Some(last_track) = last_track {
+                        // if the last scrobbled track was under 50%, we already did scrobble
+                        last_track.title == track.title && last_track.album == track.album && (last_track.elapsed_time.unwrap() <= last_track.duration.unwrap() / 2)
+                    } else {false};
+
+                    if already_scrobbled {
+                        continue;
+                    }
+                    for scrobbler in scrobblers.clone() {
+                        let track = track.clone();
+                        tauri::async_runtime::spawn(async move {scrobbler.now_playing(&track).await;});
                     }
                 }
+                last_scrobble.lock().replace(track.clone());
             }
-        });
+        }));
     }
 
     fn sanitize_apple_music_album_name(album_name: &str) -> String {

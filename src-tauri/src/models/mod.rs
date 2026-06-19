@@ -1,4 +1,5 @@
 pub mod deezer_api;
+pub mod listenbrainz;
 
 #[derive(Debug, Clone)]
 pub struct MediaInfo {
@@ -9,4 +10,5 @@ pub struct MediaInfo {
     pub cover_artwork: Option<String>,
     pub is_playing: bool,
     pub duration: Option<u32>,
+    pub isrc: Option<String>,
 }
