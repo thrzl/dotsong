@@ -45,8 +45,6 @@ jobs:
             artifacts/**/*.app.zip
             artifacts/**/*.exe
             artifacts/**/*.msi
-            artifacts/**/*.rpm
-            artifacts/**/*.deb
             artifacts/**/*.AppImage
 
       - uses: actions/attest-build-provenance@v3
@@ -56,8 +54,6 @@ jobs:
             artifacts/**/*.app.zip
             artifacts/**/*.exe
             artifacts/**/*.msi
-            artifacts/**/*.rpm
-            artifacts/**/*.deb
             artifacts/**/*.AppImage
 
       - name: generate notes
