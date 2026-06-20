@@ -1,0 +1,79 @@
+name: auto-tag on bump
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs: {}
+  push:
+    branches: [main]
+    paths: ["src-tauri/tauri.conf.json"]
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  autorelease:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.get-tag.outputs.version }}
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # ensure full history so tags are available
+
+      - name: fetch tags
+        run: git fetch --tags --prune
+
+      - name: compare tags
+        id: get-tag
+        run: |
+          NEW_VERSION=$(jq -r .version src-tauri/tauri.conf.json)
+          echo "current version: $NEW_VERSION"
+
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          echo "latest tag: $LATEST_TAG"
+          OLD_VERSION=$(git show "$LATEST_TAG:src-tauri/tauri.conf.json" | jq -r .version)
+          echo "old version: $OLD_VERSION"
+
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "old-version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: create/update tag
+        id: create-tag
+        if: steps.get-tag.outputs.version
+        uses: actions/github-script@v8
+        with: # from https://stackoverflow.com/a/78010013
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/v${{ steps.get-tag.outputs.version }}',
+              sha: context.sha
+            }).catch(err => {
+              if (err.status !== 422) throw err;
+              github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'tags/v${{ steps.get-tag.outputs.version }}',
+                sha: context.sha
+              });
+            })
+
+  build:
+    needs: autorelease
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    if: needs.autorelease.outputs.version
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      tagName: "v${{ needs.autorelease.outputs.version }}"

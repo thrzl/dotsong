@@ -1,0 +1,122 @@
+name: "build binaries"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tagName:
+        description: "tag to build"
+        required: true
+        default: "0.0.0"
+  workflow_call:
+    inputs:
+      tagName:
+        required: true
+        type: string
+
+# This is the example from the readme.
+# On each push to the `release` branch it will create or update a GitHub release, build your app, and upload the artifacts to the release.
+
+jobs:
+  build:
+    permissions:
+      contents: write
+      artifact-metadata: write
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: "macos-latest" # for Arm based macs (M1 and above).
+            arch: aarch64
+            args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest" # for Intel based macs.
+            arch: x86_64
+            args: "--target x86_64-apple-darwin"
+          - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
+            arch: x86_64
+            args: ""
+          - platform: "windows-latest"
+            arch: x86_64
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          cache: true
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: install frontend dependencies
+        run: bun install
+
+      - name: get version for windows
+        id: sanitized-version
+        run: |
+          VERSION=${TAG_NAME#v}
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            VERSION=${VERSION%%-*}
+          fi
+          echo "config={\"version\":\"$VERSION\"}" >> $GITHUB_OUTPUT
+        shell: bash
+        env:
+          TAG_NAME: ${{ inputs.tagName }}
+
+      - name: build binaries
+        run: bun tauri build ${{ matrix.args }} --config '${{ steps.sanitized-version.outputs.config }}'
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+          TAG_NAME: ${{ inputs.tagName }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+
+      - name: zip mac .app bundles
+        if: matrix.platform == 'macos-latest' # This must match the platform value defined above.
+        run: |
+          find target -name "*.app" -type d | while read app; do
+            base="${app%.app}"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "${base}-${{ matrix.arch }}.app.zip"
+          done
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotsong-artifacts-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            target/**/release/bundle/dmg/*.dmg
+            target/**/release/bundle/macos/*.app.zip
+            target/release/dotsong.exe
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+
+  release:
+    needs: build
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      tagName: ${{ inputs.tagName }}
