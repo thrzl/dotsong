@@ -32,9 +32,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
+          merge-multiple: true
+
+      - name: list artifacts
+        run: find artifacts -type f | sort
 
       - name: sign release artifacts
-        uses: sigstore/gh-action-sigstore-python@v3.2.0
+        uses: sigstore/gh-action-sigstore-python@v3.4.0
         with:
           inputs: |
             artifacts/**/*.dmg
@@ -56,6 +60,17 @@ jobs:
             artifacts/**/*.deb
             artifacts/**/*.AppImage
 
+      - name: generate notes
+        env:
+          TAG_NAME: ${{ inputs.tagName }}
+        run: |
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/releases/generate-notes \
+            -F tag_name="$TAG_NAME" \
+            -q .body > notes.md
+          bash .github/scripts/release-links.sh "${{ github.repository }}" "$TAG_NAME" artifacts/ >> notes.md
+
       - name: make release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,4 +81,4 @@ jobs:
           else
             PRERELEASE_FLAG=""
           fi
-          gh release create $TAG_NAME $(find artifacts -path '*/release/bundle/*' -type f) --generate-notes $PRERELEASE_FLAG -d
+          gh release create $TAG_NAME $(find artifacts -path '*/release/bundle/*' -type f) --notes-file notes.md $PRERELEASE_FLAG -d
