@@ -31,6 +31,14 @@ it also allows you to display your current song as your discord presence
 
 dotsong is currently alpha or something like that. should be stable and everything, it's just that it's very incomplete. see the todo list for more info on that
 
+## installation note for macOS users:
+
+i dont have a code signing license or whatever, so macOS will tell you that the app is damaged. you need to run the following in Terminal after you've installed:
+
+```bash
+xattr -c /Applications/dotsong.app
+```
+
 ## why
 
 nobody else does this for free, for some reason
