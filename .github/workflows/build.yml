@@ -118,5 +118,6 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     with:
       tagName: ${{ inputs.tagName }}
