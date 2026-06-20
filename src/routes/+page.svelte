@@ -20,7 +20,7 @@
 	import { onMount } from "svelte";
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 
-	type ScrobblerFormat = "LastFM" | "ListenBrainz";
+	type ScrobblerFormat = "LastFM" | "ListenBrainz" | "LibreFM";
 
 	type Scrobbler = {
 		id: string;
@@ -41,6 +41,12 @@
 			label: "last.fm",
 			keyLabel: "api key",
 			defaultEndpoint: "https://ws.audioscrobbler.com/2.0/",
+		},
+		{
+			value: "LibreFM" as const,
+			label: "libre.fm",
+			keyLabel: "api key",
+			defaultEndpoint: "https://libre.fm/2.0/",
 		},
 		{
 			value: "ListenBrainz" as const,
@@ -121,9 +127,28 @@
 		}
 	}
 
+	function isOfficialLibreFm(url: string): boolean {
+		try {
+			const host = new URL(url).hostname;
+			return (
+				host === "libre.fm" ||
+				host === "www.libre.fm" ||
+				host.endsWith(".libre.fm")
+			);
+		} catch {
+			return false;
+		}
+	}
+
 	const showLastFmLogin = $derived(
 		draft.format === "LastFM" && isOfficialLastFm(draft.endpoint_url),
 	);
+
+	const showLibreFmLogin = $derived(
+		draft.format === "LibreFM" && isOfficialLibreFm(draft.endpoint_url),
+	);
+
+	const showAuthLogin = $derived(showLastFmLogin || showLibreFmLogin);
 
 	let authStarted = $state(false);
 	let authBusy = $state(false);
@@ -136,7 +161,11 @@
 		authBusy = true;
 		authError = null;
 		try {
-			await invoke("start_lastfm_auth");
+			const cmd =
+				draft.format === "LibreFM"
+					? "start_librefm_auth"
+					: "start_lastfm_auth";
+			await invoke(cmd);
 			authStarted = true;
 		} catch (err) {
 			authError = String(err);
@@ -149,7 +178,11 @@
 		authBusy = true;
 		authError = null;
 		try {
-			const sessionKey = await invoke<string>("complete_lastfm_auth");
+			const cmd =
+				draft.format === "LibreFM"
+					? "complete_librefm_auth"
+					: "complete_lastfm_auth";
+			const sessionKey = await invoke<string>(cmd);
 			draft.api_key = sessionKey;
 			authStarted = false;
 			if (nameError === null) commitDraft();
@@ -375,7 +408,7 @@
 				<Empty.Header>
 					<Empty.Title>no targets yet</Empty.Title>
 					<Empty.Description>
-						add a last.fm or listenbrainz target to start
+						add a last.fm, libre.fm, or listenbrainz target to start
 						scrobbling.
 					</Empty.Description>
 				</Empty.Header>
@@ -399,7 +432,11 @@
 			<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
 				reset
 			</Button>
-			<Button variant="secondary" class="rounded-md text-xs" onclick={close}>
+			<Button
+				variant="secondary"
+				class="rounded-md text-xs"
+				onclick={close}
+			>
 				cancel
 			</Button>
 		</div>
@@ -449,6 +486,8 @@
 					aria-label="format"
 				>
 					<ToggleGroup.Item value="LastFM">last.fm</ToggleGroup.Item>
+					<ToggleGroup.Item value="LibreFM">libre.fm</ToggleGroup.Item
+					>
 					<ToggleGroup.Item value="ListenBrainz"
 						>listenbrainz</ToggleGroup.Item
 					>
@@ -465,9 +504,10 @@
 					spellcheck="false"
 					autocomplete="off"
 					class="font-mono text-xs"
+					disabled={showAuthLogin}
 				/>
 			</Field.Field>
-			{#if showLastFmLogin}
+			{#if showAuthLogin}
 				<Field.Field data-invalid={authError !== null}>
 					<Button
 						type="button"
@@ -477,13 +517,16 @@
 						disabled={authBusy}
 					>
 						{#if authBusy}
-							<LoaderIcon data-icon="inline-start" class="animate-spin" />
+							<LoaderIcon
+								data-icon="inline-start"
+								class="animate-spin"
+							/>
 							authorizing...
 						{:else if authStarted}
 							continue
 						{:else}
 							<LogInIcon data-icon="inline-start" />
-							login with last.fm
+							login with {formatMeta(draft.format).label}
 						{/if}
 					</Button>
 					{#if authError}
@@ -492,7 +535,7 @@
 						<Field.FieldDescription>
 							{authStarted
 								? "authorize in your browser, then click continue"
-								: "authenticate with last.fm to enable scrobbling"}
+								: `authenticate with ${formatMeta(draft.format).label} to enable scrobbling`}
 						</Field.FieldDescription>
 					{/if}
 				</Field.Field>
@@ -514,7 +557,8 @@
 						<InputGroup.Addon align="inline-end" class="px-1">
 							<InputGroup.Button
 								size="icon-xs"
-								onclick={() => (draft.revealed = !draft.revealed)}
+								onclick={() =>
+									(draft.revealed = !draft.revealed)}
 								disabled={!draft.api_key}
 								aria-label={draft.revealed
 									? "hide key"

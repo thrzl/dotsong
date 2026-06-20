@@ -2510,9 +2510,8 @@ dependencies = [
 
 [[package]]
 name = "last-fm-rs"
-version = "20251214.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8244fff29d23a55606d14e5a8508e6f50f53086532982772f2215f2e477a2bdf"
+version = "20260120.0.0"
+source = "git+https://github.com/thrzl/last-fm-rs#c3607bb11882a66a23bfbb1bbab27fcca16372f3"
 dependencies = [
  "md5",
  "reqwest 0.11.27",

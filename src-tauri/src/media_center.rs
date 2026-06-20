@@ -104,7 +104,13 @@ impl MediaCenter {
                     | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
                     _ => continue,
                 };
-                let enriched = self.deezer_client.enrich_media_info(&media_info, player_name.to_lowercase().contains("applemusic")).await;
+                let enriched = self
+                    .deezer_client
+                    .enrich_media_info(
+                        &media_info,
+                        player_name.to_lowercase().contains("applemusic"),
+                    )
+                    .await;
                 if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
                     self.track_tx
                         .send(TrackUpdateEvent::PlaybackStateChange(enriched))
@@ -132,7 +138,11 @@ impl MediaCenter {
                 let player = now_playing.get_player(&player_name).await.ok()?;
                 let artist = if player_name.to_lowercase().contains("applemusic") {
                     // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
-                    println!("{} becomes {}", track.artist[0], track.artist[0].replace(" — ", " "));
+                    println!(
+                        "{} becomes {}",
+                        track.artist[0],
+                        track.artist[0].replace(" — ", " ")
+                    );
                     vec![track.artist[0].replace(" — ", " ")]
                 } else {
                     println!("player {}", player_name);
@@ -157,11 +167,11 @@ impl MediaCenter {
                 Some(match player.current_track {
                     Some(track) => {
                         let artist = if player_name.to_lowercase().contains("applemusic") {
-                    // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
-                    vec![track.artist[0].replace(" — ", " ")]
-                } else {
-                    track.artist
-                };
+                            // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
+                            vec![track.artist[0].replace(" — ", " ")]
+                        } else {
+                            track.artist
+                        };
                         MediaInfo {
                             title: Some(track.title),
                             album: track.album,
@@ -193,11 +203,11 @@ impl MediaCenter {
                 Some(match player.current_track {
                     Some(track) => {
                         let artist = if player_name.to_lowercase().contains("applemusic") {
-                    // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
-                    vec![track.artist[0].replace(" — ", " ")]
-                } else {
-                    track.artist
-                };
+                            // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
+                            vec![track.artist[0].replace(" — ", " ")]
+                        } else {
+                            track.artist
+                        };
                         MediaInfo {
                             title: Some(track.title),
                             album: track.album,
@@ -299,7 +309,9 @@ impl MediaCenter {
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
-                let enriched_track = deezer_client.enrich_media_info(&media_info_clone, false).await;
+                let enriched_track = deezer_client
+                    .enrich_media_info(&media_info_clone, false)
+                    .await;
 
                 if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(
@@ -310,10 +322,7 @@ impl MediaCenter {
                     tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                         .unwrap();
                 };
-                {
-                    let mut last_track = last_track_ptr.lock();
-                    *last_track = Some(enriched_track.clone());
-                }
+                last_track_ptr.lock().replace(enriched_track.clone());
                 play_state_notify.notify_one();
             });
         });

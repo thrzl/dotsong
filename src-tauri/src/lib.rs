@@ -53,6 +53,29 @@ async fn complete_lastfm_auth(state: tauri::State<'_, AppState>) -> Result<Strin
 }
 
 #[tauri::command]
+async fn start_librefm_auth(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let (token, auth_url) = lastfm_auth::fetch_librefm_token().await?;
+    app.opener()
+        .open_url(&auth_url, None::<&str>)
+        .map_err(|e| format!("failed to open browser: {e}"))?;
+    *state.pending_auth.lock() = Some(token);
+    Ok(())
+}
+
+#[tauri::command]
+async fn complete_librefm_auth(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let token = state
+        .pending_auth
+        .lock()
+        .take()
+        .ok_or_else(|| "no pending authorization".to_string())?;
+    lastfm_auth::exchange_librefm_token(&token).await
+}
+
+#[tauri::command]
 async fn save_config(
     state: tauri::State<'_, AppState>,
     config: config::Config,
@@ -112,43 +135,32 @@ impl AppState {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             loop {
-                if let Ok(track_event) = track_rx
-                    .wait_for(|e| matches!(e, TrackUpdateEvent::NewTrack(_)))
-                    .await
-                {
-                    let track = match track_event.clone() {
-                        TrackUpdateEvent::NewTrack(track) => track,
-                        _ => continue,
-                    };
-                    let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
-                    let now_playing_artist =
-                        track.artist.clone().unwrap_or_else(|| "-".to_string());
-                    let nothing_playing = now_playing_title == "-" && now_playing_artist == "-";
-                    let now_playing_text = if nothing_playing {
-                        "nothing playing".to_string()
-                    } else {
-                        format!(
-                            "now playing: {} - {}",
-                            now_playing_title, now_playing_artist
-                        )
-                    };
-
-                    let now_playing = MenuItem::with_id(
-                        &app,
-                        "now_playing",
-                        &now_playing_text,
-                        false,
-                        None::<&str>,
+                track_rx.changed().await.unwrap();
+                let track = match track_rx.borrow_and_update().clone() {
+                    TrackUpdateEvent::NewTrack(track) => track,
+                    _ => continue,
+                };
+                let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
+                let now_playing_artist = track.artist.clone().unwrap_or_else(|| "-".to_string());
+                let nothing_playing = now_playing_title == "-" && now_playing_artist == "-";
+                let now_playing_text = if nothing_playing {
+                    "nothing playing".to_string()
+                } else {
+                    format!(
+                        "now playing: {} - {}",
+                        now_playing_title, now_playing_artist
                     )
-                    .unwrap();
-                    let settings =
-                        MenuItem::with_id(&app, "settings", "settings", true, None::<&str>)
-                            .unwrap();
-                    let quit = MenuItem::with_id(&app, "quit", "quit", true, None::<&str>).unwrap();
-                    let menu = Menu::with_items(&app, &[&now_playing, &settings, &quit]).unwrap();
+                };
 
-                    tray.lock().set_menu(Some(menu)).unwrap();
-                }
+                let now_playing =
+                    MenuItem::with_id(&app, "now_playing", &now_playing_text, false, None::<&str>)
+                        .unwrap();
+                let settings =
+                    MenuItem::with_id(&app, "settings", "settings", true, None::<&str>).unwrap();
+                let quit = MenuItem::with_id(&app, "quit", "quit", true, None::<&str>).unwrap();
+                let menu = Menu::with_items(&app, &[&now_playing, &settings, &quit]).unwrap();
+
+                tray.lock().set_menu(Some(menu)).unwrap();
             }
         });
     }
@@ -156,10 +168,8 @@ impl AppState {
     fn start_discord_presence(&self) -> JoinHandle<()> {
         let mut rx = self.media_center.get_rx();
         {
-            let mut rpc_lock = self.rpc.lock();
-            let mut rpc = discord_presence::Client::new(1516876269248315422);
-            rpc.start();
-            *rpc_lock = Some(rpc);
+            let rpc = discord_presence::Client::new(1516876269248315422);
+            self.rpc.lock().replace(rpc);
         }
         let rpc = self.rpc.clone();
         tauri::async_runtime::spawn(async move {
@@ -214,9 +224,7 @@ impl AppState {
                                         let start_time = chrono::Utc::now()
                                             - chrono::Duration::seconds(elapsed_time as i64);
 
-                                        if media_info
-                                            .duration
-                                            .is_some_and(|duration| duration > 0)
+                                        if media_info.duration.is_some_and(|duration| duration > 0)
                                         {
                                             timestamps.start(start_time.timestamp() as u64).end(
                                                 media_info.duration.unwrap() as u64
@@ -350,7 +358,9 @@ pub fn run() {
             save_config,
             load_config,
             start_lastfm_auth,
-            complete_lastfm_auth
+            complete_lastfm_auth,
+            start_librefm_auth,
+            complete_librefm_auth
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
