@@ -76,6 +76,7 @@ impl MediaCenter {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn start_media_poller(self: Arc<Self>) {
+        println!("starting media poller");
         let source_fut = nowhear::MediaSourceBuilder::new().build();
         let s = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -94,19 +95,27 @@ impl MediaCenter {
                 }
             };
             while let Some(event) = stream.next().await {
-                let Some(media_info) = Self::build_media_info(&now_playing, event).await else {
+                let Some(media_info) = Self::build_media_info(&now_playing, &event).await else {
                     continue;
                 };
-                let enriched = self.deezer_client.enrich_media_info(&media_info).await;
+                let player_name = match &event {
+                    nowhear::MediaEvent::TrackChanged { player_name, .. }
+                    | nowhear::MediaEvent::PositionChanged { player_name, .. }
+                    | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
+                    _ => continue,
+                };
+                let enriched = self.deezer_client.enrich_media_info(&media_info, player_name.to_lowercase().contains("applemusic")).await;
                 if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
-                    let _ = self
-                        .track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(enriched));
+                    self.track_tx
+                        .send(TrackUpdateEvent::PlaybackStateChange(enriched))
+                        .unwrap();
                     continue;
                 }
                 self.last_track.lock().replace(enriched.clone());
                 self.play_state_notify.notify_one();
-                let _ = self.track_tx.send(TrackUpdateEvent::NewTrack(enriched));
+                self.track_tx
+                    .send(TrackUpdateEvent::NewTrack(enriched))
+                    .unwrap();
             }
         });
         s.clone().start_position_ticker();
@@ -115,15 +124,24 @@ impl MediaCenter {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     async fn build_media_info(
         now_playing: &impl nowhear::MediaSource,
-        event: nowhear::MediaEvent,
+        event: &nowhear::MediaEvent,
     ) -> Option<MediaInfo> {
         match event {
             nowhear::MediaEvent::TrackChanged { player_name, track } => {
-                let player = now_playing.get_player(player_name).await.ok()?;
+                let track = track.clone();
+                let player = now_playing.get_player(&player_name).await.ok()?;
+                let artist = if player_name.to_lowercase().contains("applemusic") {
+                    // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
+                    println!("{} becomes {}", track.artist[0], track.artist[0].replace(" — ", " "));
+                    vec![track.artist[0].replace(" — ", " ")]
+                } else {
+                    println!("player {}", player_name);
+                    track.artist
+                };
                 Some(MediaInfo {
                     title: Some(track.title),
                     album: track.album,
-                    artist: Some(track.artist.join(", ")),
+                    artist: Some(artist.join(", ")),
                     elapsed_time: None,
                     cover_artwork: track.art_url,
                     is_playing: player.playback_state == nowhear::PlaybackState::Playing,
@@ -135,18 +153,26 @@ impl MediaCenter {
                 player_name,
                 position,
             } => {
-                let player = now_playing.get_player(player_name).await.ok()?;
+                let player = now_playing.get_player(&player_name).await.ok()?;
                 Some(match player.current_track {
-                    Some(track) => MediaInfo {
-                        title: Some(track.title),
-                        album: track.album,
-                        artist: Some(track.artist.join(", ")),
-                        elapsed_time: Some(position.as_secs() as u32),
-                        cover_artwork: track.art_url,
-                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                        duration: track.duration.map(|t| t.as_secs() as u32),
-                        isrc: None,
-                    },
+                    Some(track) => {
+                        let artist = if player_name.to_lowercase().contains("applemusic") {
+                    // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
+                    vec![track.artist[0].replace(" — ", " ")]
+                } else {
+                    track.artist
+                };
+                        MediaInfo {
+                            title: Some(track.title),
+                            album: track.album,
+                            artist: Some(artist.join(", ")),
+                            elapsed_time: Some(position.as_secs() as u32),
+                            cover_artwork: track.art_url,
+                            is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                            duration: track.duration.map(|t| t.as_secs() as u32),
+                            isrc: None,
+                        }
+                    }
                     None => MediaInfo {
                         title: None,
                         album: None,
@@ -163,18 +189,26 @@ impl MediaCenter {
                 player_name,
                 state: _,
             } => {
-                let player = now_playing.get_player(player_name).await.ok()?;
+                let player = now_playing.get_player(&player_name).await.ok()?;
                 Some(match player.current_track {
-                    Some(track) => MediaInfo {
-                        title: Some(track.title),
-                        album: track.album,
-                        artist: Some(track.artist.join(", ")),
-                        elapsed_time: player.position.map(|p| p.as_secs() as u32),
-                        cover_artwork: track.art_url,
-                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                        duration: track.duration.map(|d| d.as_secs() as u32),
-                        isrc: None,
-                    },
+                    Some(track) => {
+                        let artist = if player_name.to_lowercase().contains("applemusic") {
+                    // apple music on windows puts the album in the artist field separated by an em dash, so we need to split it
+                    vec![track.artist[0].replace(" — ", " ")]
+                } else {
+                    track.artist
+                };
+                        MediaInfo {
+                            title: Some(track.title),
+                            album: track.album,
+                            artist: Some(artist.join(", ")),
+                            elapsed_time: player.position.map(|p| p.as_secs() as u32),
+                            cover_artwork: track.art_url,
+                            is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                            duration: track.duration.map(|d| d.as_secs() as u32),
+                            isrc: None,
+                        }
+                    }
                     None => MediaInfo {
                         title: None,
                         album: None,
@@ -265,7 +299,7 @@ impl MediaCenter {
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
-                let enriched_track = deezer_client.enrich_media_info(&media_info_clone).await;
+                let enriched_track = deezer_client.enrich_media_info(&media_info_clone, false).await;
 
                 if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(

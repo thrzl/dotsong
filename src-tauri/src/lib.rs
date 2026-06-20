@@ -213,10 +213,18 @@ impl AppState {
                                     if let Some(elapsed_time) = media_info.elapsed_time {
                                         let start_time = chrono::Utc::now()
                                             - chrono::Duration::seconds(elapsed_time as i64);
-                                        timestamps.start(start_time.timestamp() as u64).end(
-                                            media_info.duration.unwrap() as u64
-                                                + start_time.timestamp() as u64,
-                                        )
+
+                                        if media_info
+                                            .duration
+                                            .is_some_and(|duration| duration > 0)
+                                        {
+                                            timestamps.start(start_time.timestamp() as u64).end(
+                                                media_info.duration.unwrap() as u64
+                                                    + start_time.timestamp() as u64,
+                                            )
+                                        } else {
+                                            timestamps.start(start_time.timestamp() as u64)
+                                        }
                                     } else {
                                         timestamps
                                     }

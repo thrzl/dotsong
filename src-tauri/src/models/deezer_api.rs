@@ -39,10 +39,10 @@ impl DeezerClient {
         }
     }
 
-    pub async fn track_search(&self, track: &models::MediaInfo) -> Option<DeezerTrack> {
+    pub async fn track_search(&self, track: &models::MediaInfo, apple_music: bool) -> Option<DeezerTrack> {
         let clean_title = Regex::new(r"\(?(feat\.|ft\.)\s.+\)?")
             .unwrap()
-            .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
+            .replace_all(track.title.clone().unwrap_or_default().as_str(), "").trim()
             .to_string();
         let query = utf8_percent_encode(
             &format!(
@@ -67,15 +67,21 @@ impl DeezerClient {
             Some(arr) => arr,
             None => return None,
         };
-        let track_info = found_tracks.iter().find(|t| {
-            t["album"]["title"].as_str().map(|s| s.to_lowercase())
+        let track_info = 
+            if apple_music {
+                found_tracks.iter().find(|t| {
+                // if it's apple music, the album title is in the artist field, so we need to check if the track artist contains the album title instead
+                track.artist.clone().is_some_and(|artist| artist.to_lowercase().contains(&t["album"]["title"].as_str().unwrap().to_lowercase()))
+                })
+            } else {
+                found_tracks.iter().find(|t| {t["album"]["title"].as_str().map(|s| s.to_lowercase())
                 == track
                     .album
                     .clone()
                     .unwrap_or_default()
                     .to_lowercase()
-                    .into()
-        })?;
+                    .into()})
+        }?;
         let title_matches = track_info["title"].as_str().map(|s| s.to_lowercase())
             == clean_title.to_lowercase().into();
         let track = Some(DeezerTrack {
@@ -97,24 +103,37 @@ impl DeezerClient {
         track
     }
 
-    pub async fn enrich_media_info(&self, media_info: &models::MediaInfo) -> models::MediaInfo {
-        let enriched_track = match self.track_search(media_info).await {
+    pub async fn enrich_media_info(&self, media_info: &models::MediaInfo, apple_music: bool) -> models::MediaInfo {
+        let enriched_track = match self.track_search(media_info, apple_music).await {
             Some(track) => track,
             None => return media_info.clone(),
         };
+        // if it's apple music, trust deezer more than the player
+        // apple music artist field may look like this: "artist name album name" with no delimiter.
+        // so we'll go by character count instead of trying to split by a delimiter, which may not even be there
+        let artist = if let Some(big_string) = media_info.artist.clone() {
+            big_string[..enriched_track.artist.len()].to_string()
+        } else {
+            enriched_track.artist.clone()
+        };
+        let album = if let Some(big_string) = media_info.album.clone() {
+            big_string[enriched_track.artist.len()..].trim().to_string()
+        } else {
+            enriched_track.album.title.clone()
+        };
         models::MediaInfo {
             title: Some(media_info.title.clone().unwrap_or(enriched_track.title)),
-            album: Some(
+            album: if apple_music {Some(album)} else {Some(
                 media_info
                     .album
                     .clone()
                     .unwrap_or(enriched_track.album.title),
-            ),
-            artist: Some(media_info.artist.clone().unwrap_or(enriched_track.artist)),
+            )},
+            artist: if apple_music {Some(artist)} else {Some(media_info.artist.clone().unwrap_or(enriched_track.artist))},
             elapsed_time: media_info.elapsed_time,
             cover_artwork: enriched_track.cover_artwork,
             is_playing: media_info.is_playing,
-            duration: media_info.duration.or(Some(enriched_track.duration as u32)),
+            duration: if apple_music {Some(enriched_track.duration as u32)} else {media_info.duration.or(Some(enriched_track.duration as u32))},
             isrc: enriched_track.isrc,
         }
     }
