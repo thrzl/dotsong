@@ -56,8 +56,9 @@ nobody else does this for free, for some reason
 - [x] discord rich presence
 - [x] listenbrainz scrobbling
 - [x] last.fm scrobbling
-- [ ] libre.fm scrobbling (just last.fm to a diff url)
-- [ ] auto updates (opt in)
+- [x] libre.fm scrobbling (just last.fm to a diff url)
+- [x] check for updates (opt in)
+- [ ] 
 
 ## goals
 
