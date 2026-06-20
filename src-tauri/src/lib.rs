@@ -120,10 +120,15 @@ impl AppState {
                     let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
                     let now_playing_artist =
                         track.artist.clone().unwrap_or_else(|| "-".to_string());
-                    let now_playing_text = format!(
-                        "now playing: {} - {}",
-                        now_playing_title, now_playing_artist
-                    );
+                    let nothing_playing = now_playing_title == "-" && now_playing_artist == "-";
+                    let now_playing_text = if nothing_playing {
+                        "nothing playing".to_string()
+                    } else {
+                        format!(
+                            "now playing: {} - {}",
+                            now_playing_title, now_playing_artist
+                        )
+                    };
 
                     let now_playing = MenuItem::with_id(
                         &app,
@@ -236,7 +241,7 @@ pub fn run() {
             // let icon =
             //     Icon::from_rgba(icon_img.to_rgba8().into_raw(), icon_width, icon_height).unwrap();
             let now_playing =
-                MenuItem::with_id(app, "now_playing", "now playing: -", false, None::<&str>)
+                MenuItem::with_id(app, "now_playing", "nothing playing", false, None::<&str>)
                     .unwrap();
             let quit = MenuItem::with_id(app, "quit", "quit", true, None::<&str>).unwrap();
             let settings =
