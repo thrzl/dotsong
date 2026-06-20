@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from "@tauri-apps/api/core";
+	import { openUrl } from "@tauri-apps/plugin-opener";
 	import {
 		enable as enableAutostart,
 		disable as disableAutostart,
@@ -162,6 +163,18 @@
 	let autostartEnabled = $state(false);
 	let autostartLoaded = $state(false);
 
+	type UpdateInfo = {
+		current: string;
+		latest: string;
+		url: string;
+		available: boolean;
+	};
+
+	let currentVersion = $state<string | null>(null);
+	let updateStatus = $state<"idle" | "checking" | "done" | "error">("idle");
+	let updateInfo = $state<UpdateInfo | null>(null);
+	let updateError = $state<string | null>(null);
+
 	let loaded = false;
 	let saveStatus = $state<"idle" | "saving" | "saved" | "error">("idle");
 
@@ -280,6 +293,23 @@
 		})();
 	});
 
+	async function checkForUpdate() {
+		updateStatus = "checking";
+		updateError = null;
+		updateInfo = null;
+		try {
+			updateInfo = await invoke<UpdateInfo>("check_for_update");
+			updateStatus = "done";
+		} catch (err) {
+			updateError = String(err);
+			updateStatus = "error";
+		}
+	}
+
+	async function openRelease() {
+		if (updateInfo?.url) await openUrl(updateInfo.url);
+	}
+
 	async function close() {
 		const window = getCurrentWindow();
 		await window.close();
@@ -301,6 +331,11 @@
 			console.error("isAutostartEnabled failed:", err);
 		}
 		autostartLoaded = true;
+		try {
+			currentVersion = await invoke<string>("get_app_version");
+		} catch (err) {
+			console.error("get_app_version failed:", err);
+		}
 	});
 </script>
 
@@ -456,6 +491,58 @@
 					</Empty.Description>
 				</Empty.Header>
 			</Empty.Root>
+		{/if}
+	</section>
+
+	<Separator />
+
+	<section class="flex flex-col gap-3">
+		<h2 class="text-foreground text-sm font-semibold">updates</h2>
+		<Field.Field orientation="horizontal">
+			<Field.FieldContent>
+				<Field.FieldTitle>current version</Field.FieldTitle>
+				<Field.FieldDescription>
+					{currentVersion ? `v${currentVersion}` : "loading…"}
+				</Field.FieldDescription>
+			</Field.FieldContent>
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				class="rounded-md text-xs"
+				onclick={checkForUpdate}
+				disabled={updateStatus === "checking"}
+			>
+				{updateStatus === "checking" ? "checking…" : "check for updates"}
+			</Button>
+		</Field.Field>
+		{#if updateStatus === "done" && updateInfo}
+			{#if updateInfo.available}
+				<div
+					class="flex items-center justify-between gap-3 rounded-md border border-emerald-600/30 bg-emerald-600/5 px-3 py-2 text-xs"
+				>
+					<span class="text-foreground">
+						v{updateInfo.latest} is available
+					</span>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						class="rounded-md text-xs"
+						onclick={openRelease}
+					>
+						view release
+					</Button>
+				</div>
+			{:else}
+				<p class="text-muted-foreground text-xs">
+					you're on the latest version
+				</p>
+			{/if}
+		{:else if updateStatus === "error"}
+			<p class="text-destructive text-xs">
+				couldn't check for updates: {updateError}
+			</p>
 		{/if}
 	</section>
 

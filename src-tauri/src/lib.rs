@@ -75,6 +75,60 @@ async fn complete_librefm_auth(state: tauri::State<'_, AppState>) -> Result<Stri
     lastfm_auth::exchange_librefm_token(&token).await
 }
 
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    current: String,
+    latest: String,
+    url: String,
+    available: bool,
+}
+
+fn parse_version(s: &str) -> Vec<u64> {
+    s.trim_start_matches('v')
+        .split('.')
+        .filter_map(|p| p.parse().ok())
+        .collect()
+}
+
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let current = app.package_info().version.to_string();
+    let url = "https://api.github.com/repos/thrzl/dotsong/releases/latest";
+    let resp = reqwest::Client::new()
+        .get(url)
+        .header("User-Agent", "thrzl/dotsong")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("network error: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("github returned {}", resp.status()));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse error: {e}"))?;
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or_else(|| "no tag_name in release".to_string())?;
+    let html_url = json["html_url"]
+        .as_str()
+        .ok_or_else(|| "no html_url in release".to_string())?;
+    let latest = tag.trim_start_matches('v').to_string();
+    let available = parse_version(&latest) > parse_version(&current);
+    Ok(UpdateInfo {
+        current,
+        latest,
+        url: html_url.to_string(),
+        available,
+    })
+}
+
 #[tauri::command]
 async fn save_config(
     state: tauri::State<'_, AppState>,
@@ -364,7 +418,9 @@ pub fn run() {
             start_lastfm_auth,
             complete_lastfm_auth,
             start_librefm_auth,
-            complete_librefm_auth
+            complete_librefm_auth,
+            get_app_version,
+            check_for_update
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
