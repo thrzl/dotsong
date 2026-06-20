@@ -12,3 +12,18 @@ pub struct MediaInfo {
     pub duration: Option<u32>,
     pub isrc: Option<String>,
 }
+
+impl Default for MediaInfo {
+    fn default() -> Self {
+        MediaInfo {
+            title: None,
+            album: None,
+            artist: None,
+            elapsed_time: None,
+            cover_artwork: None,
+            is_playing: false,
+            duration: None,
+            isrc: None,
+        }
+    }
+}

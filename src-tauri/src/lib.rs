@@ -112,9 +112,12 @@ impl AppState {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             loop {
-                if let Ok(track_event) = track_rx.recv().await {
-                    let track = match track_event {
-                        TrackUpdateEvent::NewTrack(info) => info,
+                if let Ok(track_event) = track_rx
+                    .wait_for(|e| matches!(e, TrackUpdateEvent::NewTrack(_)))
+                    .await
+                {
+                    let track = match track_event.clone() {
+                        TrackUpdateEvent::NewTrack(track) => track,
                         _ => continue,
                     };
                     let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
@@ -171,57 +174,57 @@ impl AppState {
             }
 
             loop {
-                if let Ok(track_event) = rx.recv().await {
-                    let mut guard = rpc.lock();
-                    let Some(client) = guard.as_mut() else {
-                        continue;
-                    };
-                    let media_info = match track_event {
-                        TrackUpdateEvent::NewTrack(info) => info,
-                        TrackUpdateEvent::PlaybackStateChange(info) => info,
-                        _ => continue,
-                    };
-                    if !media_info.is_playing {
-                        client.clear_activity().unwrap();
-                        continue;
-                    }
-                    if media_info.title.is_some() && media_info.artist.is_some() {
-                        client
-                            .set_activity(|p| {
-                                p.activity_type(discord_presence::models::ActivityType::Listening)
-                                    .status_display(discord_presence::models::DisplayType::State)
-                                    .state(media_info.artist.clone().unwrap_or_default())
-                                    .details(media_info.title.clone().unwrap_or_default())
-                                    .assets(|assets| {
-                                        let assets = assets.large_image(
-                                            &media_info
-                                                .cover_artwork
-                                                .clone()
-                                                .unwrap_or("default".to_string()),
-                                        );
-                                        if let Some(album_name) = media_info.album.clone() {
-                                            assets.large_text(album_name)
-                                        } else {
-                                            assets
-                                        }
-                                    })
-                                    .timestamps(|timestamps| {
-                                        if let Some(elapsed_time) = media_info.elapsed_time {
-                                            let start_time = chrono::Utc::now()
-                                                - chrono::Duration::seconds(elapsed_time as i64);
-                                            timestamps.start(start_time.timestamp() as u64).end(
-                                                media_info.duration.unwrap() as u64
-                                                    + start_time.timestamp() as u64,
-                                            )
-                                        } else {
-                                            timestamps
-                                        }
-                                    })
-                            })
-                            .unwrap();
-                    } else {
-                        client.clear_activity().unwrap();
-                    }
+                rx.changed().await.unwrap();
+                let track_event = rx.borrow_and_update().clone();
+                let mut guard = rpc.lock();
+                let Some(client) = guard.as_mut() else {
+                    continue;
+                };
+                let media_info = match track_event {
+                    TrackUpdateEvent::NewTrack(info) => info,
+                    TrackUpdateEvent::PlaybackStateChange(info) => info,
+                    _ => continue,
+                };
+                if !media_info.is_playing {
+                    client.clear_activity().unwrap();
+                    continue;
+                }
+                if media_info.title.is_some() && media_info.artist.is_some() {
+                    client
+                        .set_activity(|p| {
+                            p.activity_type(discord_presence::models::ActivityType::Listening)
+                                .status_display(discord_presence::models::DisplayType::State)
+                                .state(media_info.artist.clone().unwrap_or_default())
+                                .details(media_info.title.clone().unwrap_or_default())
+                                .assets(|assets| {
+                                    let assets = assets.large_image(
+                                        &media_info
+                                            .cover_artwork
+                                            .clone()
+                                            .unwrap_or("default".to_string()),
+                                    );
+                                    if let Some(album_name) = media_info.album.clone() {
+                                        assets.large_text(album_name)
+                                    } else {
+                                        assets
+                                    }
+                                })
+                                .timestamps(|timestamps| {
+                                    if let Some(elapsed_time) = media_info.elapsed_time {
+                                        let start_time = chrono::Utc::now()
+                                            - chrono::Duration::seconds(elapsed_time as i64);
+                                        timestamps.start(start_time.timestamp() as u64).end(
+                                            media_info.duration.unwrap() as u64
+                                                + start_time.timestamp() as u64,
+                                        )
+                                    } else {
+                                        timestamps
+                                    }
+                                })
+                        })
+                        .unwrap();
+                } else {
+                    client.clear_activity().unwrap();
                 }
             }
         })

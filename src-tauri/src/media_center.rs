@@ -4,7 +4,7 @@ use crate::models::{self, MediaInfo};
 use media_remote::Subscription;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -21,7 +21,7 @@ pub enum TrackUpdateEvent {
 
 pub struct MediaCenter {
     last_track: Arc<Mutex<Option<MediaInfo>>>,
-    track_tx: broadcast::Sender<TrackUpdateEvent>,
+    track_tx: watch::Sender<TrackUpdateEvent>,
     scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     #[cfg(target_os = "macos")]
@@ -37,7 +37,7 @@ impl MediaCenter {
         *scrobblers_lock = scrobblers;
     }
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
-        let (tx, _) = broadcast::channel(1);
+        let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
         MediaCenter {
             last_track: Arc::new(Mutex::new(None)),
             track_tx: tx,
@@ -50,7 +50,7 @@ impl MediaCenter {
         }
     }
 
-    pub fn get_rx(&self) -> broadcast::Receiver<TrackUpdateEvent> {
+    pub fn get_rx(&self) -> watch::Receiver<TrackUpdateEvent> {
         self.track_tx.subscribe()
     }
 
@@ -302,9 +302,8 @@ impl MediaCenter {
             let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
             loop {
                 let scrobblers = scrobblers.lock().clone();
-                let event = match rx.recv().await {
-                    Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                let event = match rx.changed().await {
+                    Ok(()) => rx.borrow_and_update().clone(),
                     _ => continue,
                 };
                 let last_track = last_scrobble.lock().clone();
