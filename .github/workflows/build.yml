@@ -35,7 +35,7 @@ jobs:
             args: "--target x86_64-apple-darwin"
           - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
             arch: x86_64
-            args: ""
+            args: "--bundles appimage"
           - platform: "windows-latest"
             arch: x86_64
             args: ""
