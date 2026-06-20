@@ -43,12 +43,19 @@ xattr -c /Applications/dotsong.app
 
 nobody else does this for free, for some reason
 
+### feats
+
+- almost 0% CPU (the app spends most of its time waiting for updates)
+- 30-40 MB memory (when the settings menu is closed)
+- support for any listenbrainz/last.fm compatible scrobbling server
+- completely free
+
 ## todo list
 
 - [x] working settings menu
 - [x] discord rich presence
 - [x] listenbrainz scrobbling
-- [ ] last.fm scrobbling
+- [x] last.fm scrobbling
 - [ ] libre.fm scrobbling (just last.fm to a diff url)
 
 ## goals
