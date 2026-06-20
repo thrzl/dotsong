@@ -252,6 +252,10 @@ pub fn run() {
     let program = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {})) // we don't gotta do anything just don't reopen
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             // let icon_img = image::open("./icons/icon.png").unwrap();
             // let icon_width = icon_img.width();

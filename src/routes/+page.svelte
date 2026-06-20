@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { invoke } from "@tauri-apps/api/core";
+	import {
+		enable as enableAutostart,
+		disable as disableAutostart,
+		isEnabled as isAutostartEnabled,
+	} from "@tauri-apps/plugin-autostart";
 	import { Input } from "$lib/components/ui/input";
 	import { Button } from "$lib/components/ui/button";
 	import { Switch } from "$lib/components/ui/switch";
@@ -154,6 +159,9 @@
 	let authBusy = $state(false);
 	let authError = $state<string | null>(null);
 
+	let autostartEnabled = $state(false);
+	let autostartLoaded = $state(false);
+
 	let loaded = false;
 	let saveStatus = $state<"idle" | "saving" | "saved" | "error">("idle");
 
@@ -259,6 +267,19 @@
 		return () => clearTimeout(timer);
 	});
 
+	$effect(() => {
+		const enabled = autostartEnabled;
+		if (!autostartLoaded) return;
+		(async () => {
+			try {
+				if (enabled) await enableAutostart();
+				else await disableAutostart();
+			} catch (err) {
+				console.error("autostart toggle failed:", err);
+			}
+		})();
+	});
+
 	async function close() {
 		const window = getCurrentWindow();
 		await window.close();
@@ -274,6 +295,12 @@
 			console.error("load_config unavailable:", err);
 		}
 		loaded = true;
+		try {
+			autostartEnabled = await isAutostartEnabled();
+		} catch (err) {
+			console.error("isAutostartEnabled failed:", err);
+		}
+		autostartLoaded = true;
 	});
 </script>
 
@@ -290,9 +317,25 @@
 
 	<Field.Field orientation="horizontal">
 		<Field.FieldContent>
+			<Field.FieldTitle>launch at login</Field.FieldTitle>
+			<Field.FieldDescription>
+				start dotsong in the background automatically when you log in
+			</Field.FieldDescription>
+		</Field.FieldContent>
+		<Switch
+			id="autostart"
+			bind:checked={autostartEnabled}
+			aria-label="launch at login"
+		/>
+	</Field.Field>
+
+	<Separator />
+
+	<Field.Field orientation="horizontal">
+		<Field.FieldContent>
 			<Field.FieldTitle>discord rich presence</Field.FieldTitle>
 			<Field.FieldDescription>
-				show the now-playing track in your discord status
+				show the currently playing track in your discord status
 			</Field.FieldDescription>
 		</Field.FieldContent>
 		<Switch
