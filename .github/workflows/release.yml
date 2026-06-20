@@ -58,6 +58,7 @@ jobs:
 
       - name: generate notes
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ inputs.tagName }}
         run: |
           gh api \
