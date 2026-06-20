@@ -129,6 +129,9 @@
 	let authBusy = $state(false);
 	let authError = $state<string | null>(null);
 
+	let loaded = false;
+	let saveStatus = $state<"idle" | "saving" | "saved" | "error">("idle");
+
 	async function startAuth() {
 		authBusy = true;
 		authError = null;
@@ -149,6 +152,7 @@
 			const sessionKey = await invoke<string>("complete_lastfm_auth");
 			draft.api_key = sessionKey;
 			authStarted = false;
+			if (nameError === null) commitDraft();
 		} catch (err) {
 			authError = String(err);
 			authStarted = false;
@@ -198,24 +202,29 @@
 		dialogOpen = false;
 	}
 
-	async function save() {
-		console.log("saving config...");
-		try {
-			const payload = {
-				scrobblers: config.scrobblers.map((s) => ({
-					id: s.id,
-					endpoint_url: s.endpoint_url,
-					api_key: s.api_key,
-					format: s.format,
-				})),
-				discord_rpc_enabled: config.discord_rpc_enabled,
-			};
-			await invoke("save_config", { config: payload });
-		} catch (err) {
-			console.error("save_config unavailable:", err);
-		}
-		await close();
-	}
+	$effect(() => {
+		const payload = {
+			scrobblers: config.scrobblers.map((s) => ({
+				id: s.id,
+				endpoint_url: s.endpoint_url,
+				api_key: s.api_key,
+				format: s.format,
+			})),
+			discord_rpc_enabled: config.discord_rpc_enabled,
+		};
+		if (!loaded) return;
+		saveStatus = "saving";
+		const timer = setTimeout(async () => {
+			try {
+				await invoke("save_config", { config: payload });
+				saveStatus = "saved";
+			} catch (err) {
+				saveStatus = "error";
+				console.error("autosave failed:", err);
+			}
+		}, 400);
+		return () => clearTimeout(timer);
+	});
 
 	async function close() {
 		const window = getCurrentWindow();
@@ -231,6 +240,7 @@
 		} catch (err) {
 			console.error("load_config unavailable:", err);
 		}
+		loaded = true;
 	});
 </script>
 
@@ -375,14 +385,24 @@
 
 	<Separator />
 
-	<footer class="flex items-center justify-end gap-2">
-		<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
-			reset
-		</Button>
-		<Button variant="secondary" class="rounded-md text-xs" onclick={close}>
-			cancel
-		</Button>
-		<Button class="rounded-md text-xs w-12" onclick={save}>ok</Button>
+	<footer class="flex items-center justify-between gap-2">
+		<span class="text-muted-foreground min-w-16 text-xs tabular-nums">
+			{#if saveStatus === "saving"}
+				saving…
+			{:else if saveStatus === "saved"}
+				saved
+			{:else if saveStatus === "error"}
+				save failed
+			{/if}
+		</span>
+		<div class="flex items-center gap-2">
+			<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
+				reset
+			</Button>
+			<Button variant="secondary" class="rounded-md text-xs" onclick={close}>
+				cancel
+			</Button>
+		</div>
 	</footer>
 </main>
 
