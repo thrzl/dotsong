@@ -1,6 +1,6 @@
 <br />
 <p align="center">
-  <a href="https://github.com/thrzl/chiffrage">
+  <a href="https://github.com/thrzl/dotsong">
     <img src="src-tauri/icons/icon.png" alt="dotsong project logo" width="80">
   </a>
 
