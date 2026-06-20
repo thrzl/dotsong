@@ -324,6 +324,7 @@ pub fn run() {
             app_state.start_tray_updater(app.handle());
 
             app.manage(app_state);
+            #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             Ok(())
