@@ -133,7 +133,7 @@ impl DeezerClient {
             elapsed_time: media_info.elapsed_time,
             cover_artwork: enriched_track.cover_artwork,
             is_playing: media_info.is_playing,
-            duration: if apple_music {Some(enriched_track.duration as u32)} else {media_info.duration.or(Some(enriched_track.duration as u32))},
+            duration: if media_info.duration.is_some_and(|d| d == 0) {Some(enriched_track.duration as u32)} else {media_info.duration.or(Some(enriched_track.duration as u32))},
             isrc: enriched_track.isrc,
         }
     }
