@@ -57,6 +57,7 @@ nobody else does this for free, for some reason
 - [x] listenbrainz scrobbling
 - [x] last.fm scrobbling
 - [ ] libre.fm scrobbling (just last.fm to a diff url)
+- [ ] auto updates (opt in)
 
 ## goals
 
