@@ -1,5 +1,6 @@
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
+#[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
 use std::sync::Arc;
