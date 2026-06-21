@@ -35,14 +35,22 @@ pub struct DeezerClient {
 impl DeezerClient {
     pub fn new(cache_size: u64) -> Self {
         DeezerClient {
-            cache: Cache::builder().max_capacity(cache_size).eviction_policy(moka::policy::EvictionPolicy::tiny_lfu()).build(),
+            cache: Cache::builder()
+                .max_capacity(cache_size)
+                .eviction_policy(moka::policy::EvictionPolicy::tiny_lfu())
+                .build(),
         }
     }
 
-    pub async fn track_search(&self, track: &models::MediaInfo, apple_music: bool) -> Option<DeezerTrack> {
+    pub async fn track_search(
+        &self,
+        track: &models::MediaInfo,
+        apple_music: bool,
+    ) -> Option<DeezerTrack> {
         let clean_title = Regex::new(r"\(?(feat\.|ft\.)\s.+\)?")
             .unwrap()
-            .replace_all(track.title.clone().unwrap_or_default().as_str(), "").trim()
+            .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
+            .trim()
             .to_string();
         let query = utf8_percent_encode(
             &format!(
@@ -67,27 +75,44 @@ impl DeezerClient {
             Some(arr) => arr,
             None => return None,
         };
-        let track_info = 
-            if apple_music {
-                found_tracks.iter().find(|t| {
+        let track_info = if apple_music {
+            found_tracks.iter().find(|t| {
                 // if it's apple music, the album title is in the artist field, so we need to check if the track artist contains the album title instead
-                track.artist.clone().is_some_and(|artist| artist.to_lowercase().contains(&t["album"]["title"].as_str().unwrap().to_lowercase()))
+                track.artist.clone().is_some_and(|artist| {
+                    artist
+                        .to_lowercase()
+                        .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
                 })
-            } else {
-                found_tracks.iter().find(|t| {t["album"]["title"].as_str().map(|s| s.to_lowercase())
-                == track
-                    .album
-                    .clone()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .into()})
+            })
+        } else {
+            found_tracks.iter().find(|t| {
+                t["album"]["title"].as_str().map(|s| s.to_lowercase())
+                    == track
+                        .album
+                        .clone()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .into()
+            })
         }?;
         let title_matches = track_info["title"].as_str().map(|s| s.to_lowercase())
             == clean_title.to_lowercase().into();
         let track = Some(DeezerTrack {
-            id: if title_matches {track_info["id"].as_u64()?} else {0},
-            title: if title_matches {track_info["title"].as_str()?.to_string()} else {track.title.clone()?},
-            isrc: if title_matches {track_info["isrc"].as_str().map(|s| s.to_string())} else {None},
+            id: if title_matches {
+                track_info["id"].as_u64()?
+            } else {
+                0
+            },
+            title: if title_matches {
+                track_info["title"].as_str()?.to_string()
+            } else {
+                track.title.clone()?
+            },
+            isrc: if title_matches {
+                track_info["isrc"].as_str().map(|s| s.to_string())
+            } else {
+                None
+            },
             album: DeezerAlbum {
                 id: track_info["album"]["id"].as_u64()?,
                 title: track_info["album"]["title"].as_str()?.to_string(),
@@ -103,7 +128,11 @@ impl DeezerClient {
         track
     }
 
-    pub async fn enrich_media_info(&self, media_info: &models::MediaInfo, apple_music: bool) -> models::MediaInfo {
+    pub async fn enrich_media_info(
+        &self,
+        media_info: &models::MediaInfo,
+        apple_music: bool,
+    ) -> models::MediaInfo {
         let enriched_track = match self.track_search(media_info, apple_music).await {
             Some(track) => track,
             None => return media_info.clone(),
@@ -111,29 +140,49 @@ impl DeezerClient {
         // if it's apple music, trust deezer more than the player
         // apple music artist field may look like this: "artist name album name" with no delimiter.
         // so we'll go by character count instead of trying to split by a delimiter, which may not even be there
-        let artist = if let Some(big_string) = media_info.artist.clone() {
-            big_string[..enriched_track.artist.len()].to_string()
+        let artist = if apple_music {
+            if let Some(big_string) = media_info.artist.clone() {
+                big_string[..enriched_track.artist.len()].to_string()
+            } else {
+                enriched_track.artist.clone()
+            }
         } else {
             enriched_track.artist.clone()
         };
-        let album = if let Some(big_string) = media_info.album.clone() {
-            big_string[enriched_track.artist.len()..].trim().to_string()
+        let album = if apple_music {
+            if let Some(big_string) = media_info.album.clone() {
+                big_string[enriched_track.artist.len()..].trim().to_string()
+            } else {
+                enriched_track.album.title.clone()
+            }
         } else {
             enriched_track.album.title.clone()
         };
         models::MediaInfo {
             title: Some(media_info.title.clone().unwrap_or(enriched_track.title)),
-            album: if apple_music {Some(album)} else {Some(
-                media_info
-                    .album
-                    .clone()
-                    .unwrap_or(enriched_track.album.title),
-            )},
-            artist: if apple_music {Some(artist)} else {Some(media_info.artist.clone().unwrap_or(enriched_track.artist))},
+            album: if apple_music {
+                Some(album)
+            } else {
+                Some(
+                    media_info
+                        .album
+                        .clone()
+                        .unwrap_or(enriched_track.album.title),
+                )
+            },
+            artist: if apple_music {
+                Some(artist)
+            } else {
+                Some(media_info.artist.clone().unwrap_or(enriched_track.artist))
+            },
             elapsed_time: media_info.elapsed_time,
             cover_artwork: enriched_track.cover_artwork,
             is_playing: media_info.is_playing,
-            duration: if media_info.duration.is_some_and(|d| d == 0) {Some(enriched_track.duration as u32)} else {media_info.duration.or(Some(enriched_track.duration as u32))},
+            duration: if media_info.duration.is_some_and(|d| d == 0) {
+                Some(enriched_track.duration as u32)
+            } else {
+                media_info.duration.or(Some(enriched_track.duration as u32))
+            },
             isrc: enriched_track.isrc,
         }
     }
