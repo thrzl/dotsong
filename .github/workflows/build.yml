@@ -79,6 +79,36 @@ jobs:
         env:
           TAG_NAME: ${{ inputs.tagName }}
 
+      - name: import apple signing certificate
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN=build.keychain-db
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN"
+          security import certificate.p12 -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+      - name: resolve signing identity
+        if: matrix.platform == 'macos-latest'
+        run: |
+          CERT_ID=$(security find-identity -v -p codesigning build.keychain-db \
+            | awk -F'"' '{print $2}' | head -n1)
+          if [ -z "$CERT_ID" ]; then
+            echo "::error::no code signing identity found in keychain"
+            exit 1
+          fi
+          echo "signing as: $CERT_ID"
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+
       - name: build binaries
         run: bun tauri build ${{ matrix.args }} --config '${{ steps.sanitized-version.outputs.config }}'
         env:
@@ -89,6 +119,7 @@ jobs:
           LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
           LIBREFM_API_KEY: ${{ secrets.LIBREFM_API_KEY }}
           LIBREFM_API_SECRET: ${{ secrets.LIBREFM_API_SECRET }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
 
       - name: zip mac .app bundles
         if: matrix.platform == 'macos-latest' # This must match the platform value defined above.
@@ -109,6 +140,12 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: cleanup keychain
+        if: ${{ always() && matrix.platform == 'macos-latest' }}
+        run: |
+          security delete-keychain build.keychain-db 2>/dev/null || true
+          rm -f certificate.p12
 
   release:
     needs: build
