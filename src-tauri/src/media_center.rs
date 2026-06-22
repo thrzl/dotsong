@@ -150,7 +150,7 @@ impl MediaCenter {
                 };
                 Some(MediaInfo {
                     title: Some(track.title),
-                    album: track.album,
+                    album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: Some(artist.join(", ")),
                     elapsed_time: None,
                     cover_artwork: track.art_url,
@@ -174,7 +174,7 @@ impl MediaCenter {
                         };
                         MediaInfo {
                             title: Some(track.title),
-                            album: track.album,
+                            album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: Some(position.as_secs() as u32),
                             cover_artwork: track.art_url,
@@ -210,7 +210,7 @@ impl MediaCenter {
                         };
                         MediaInfo {
                             title: Some(track.title),
-                            album: track.album,
+                            album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: player.position.map(|p| p.as_secs() as u32),
                             cover_artwork: track.art_url,
