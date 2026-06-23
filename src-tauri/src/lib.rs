@@ -175,8 +175,10 @@ impl AppState {
         }
         let rpc = self.rpc.lock().take();
         if let Some(mut rpc) = rpc {
-            rpc.clear_activity().unwrap();
-            rpc.shutdown().unwrap();
+            // these both only error if the rpc isn't started
+            // so we don't actually care
+            let _ = rpc.clear_activity();
+            let _ = rpc.shutdown();
         } else {
             println!("no rpc client to shutdown");
         }
@@ -322,12 +324,7 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            // let icon_img = image::open("./icons/icon.png").unwrap();
-            // let icon_width = icon_img.width();
-            // let icon_height = icon_img.height();
             let icon = tauri::include_image!("./icons/tray-icon.png");
-            // let icon =
-            //     Icon::from_rgba(icon_img.to_rgba8().into_raw(), icon_width, icon_height).unwrap();
             let now_playing =
                 MenuItem::with_id(app, "now_playing", "nothing playing", false, None::<&str>)
                     .unwrap();

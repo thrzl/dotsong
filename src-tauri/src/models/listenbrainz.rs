@@ -16,10 +16,6 @@ pub struct Scrobble {
 
 impl Scrobble {
     pub fn from_media_info(track: &crate::models::MediaInfo, listen_type: ListenType) -> Self {
-        // let resolution = reqwest::Client::new().post("https://api.credits.fm/v1/resolve/track").body(serde_json::json!({
-        //     "name": track.title.clone().unwrap_or_default(),
-        //     "artist": track.artist.clone().unwrap_or_default()
-        // }).unwrap()).send().await.ok();
         let payload = Payload {
             listened_at: match listen_type {
                 ListenType::Single => Some(chrono::Utc::now().timestamp()),
