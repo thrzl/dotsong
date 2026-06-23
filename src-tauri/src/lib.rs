@@ -13,12 +13,9 @@ use std::sync::Arc;
 use media_center::{MediaCenter, TrackUpdateEvent};
 
 use tauri::async_runtime::JoinHandle;
+use tauri::menu::{Menu, MenuItem};
 use tauri::Manager;
 use tauri::State;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIcon,
-};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
@@ -160,13 +157,13 @@ async fn save_config(
 
 struct AppState {
     media_center: Arc<MediaCenter>,
-    tray: Arc<Mutex<TrayIcon>>,
     quitting: AtomicBool,
     config: Arc<RwLock<config::Config>>,
     config_path: std::path::PathBuf,
     presence_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     rpc: Arc<Mutex<Option<discord_presence::Client>>>,
     pending_auth: Arc<Mutex<Option<lastfm_auth::AuthToken>>>,
+    tray_now_playing: Arc<Mutex<MenuItem<tauri::Wry>>>,
 }
 
 impl AppState {
@@ -184,10 +181,9 @@ impl AppState {
             println!("no rpc client to shutdown");
         }
     }
-    fn start_tray_updater(&self, app: &tauri::AppHandle) {
+    fn start_tray_updater(&self) {
         let mut track_rx = self.media_center.get_rx();
-        let tray = self.tray.clone();
-        let app = app.clone();
+        let tray_now_playing = self.tray_now_playing.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 track_rx.changed().await.unwrap();
@@ -207,15 +203,7 @@ impl AppState {
                     )
                 };
 
-                let now_playing =
-                    MenuItem::with_id(&app, "now_playing", &now_playing_text, false, None::<&str>)
-                        .unwrap();
-                let settings =
-                    MenuItem::with_id(&app, "settings", "settings", true, None::<&str>).unwrap();
-                let quit = MenuItem::with_id(&app, "quit", "quit", true, None::<&str>).unwrap();
-                let menu = Menu::with_items(&app, &[&now_playing, &settings, &quit]).unwrap();
-
-                tray.lock().set_menu(Some(menu)).unwrap();
+                tray_now_playing.lock().set_text(&now_playing_text).ok();
             }
         });
     }
@@ -333,7 +321,7 @@ pub fn run() {
             let settings =
                 MenuItem::with_id(app, "settings", "settings", true, None::<&str>).unwrap();
             let menu = Menu::with_items(app, &[&now_playing, &settings, &quit]).unwrap();
-            let tray = tauri::tray::TrayIconBuilder::new()
+            tauri::tray::TrayIconBuilder::new()
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .icon(icon)
@@ -397,13 +385,13 @@ pub fn run() {
             };
             let app_state = AppState {
                 media_center: Arc::new(MediaCenter::new(config.scrobblers.clone())),
-                tray: Arc::new(Mutex::new(tray)),
                 quitting: AtomicBool::new(false),
                 config: Arc::new(RwLock::new(config)),
                 config_path: app_config_dir.join("dotsong_config.json"),
                 presence_task: Arc::new(Mutex::new(None)),
                 rpc: Arc::new(Mutex::new(None)),
                 pending_auth: Arc::new(Mutex::new(None)),
+                tray_now_playing: Arc::new(Mutex::new(now_playing)),
             };
 
             app_state.media_center.clone().start_media_poller();
@@ -411,7 +399,7 @@ pub fn run() {
                 *app_state.presence_task.lock() = Some(app_state.start_discord_presence());
             }
             app_state.media_center.clone().start_scrobbling_task();
-            app_state.start_tray_updater(app.handle());
+            app_state.start_tray_updater();
 
             app.manage(app_state);
             #[cfg(target_os = "macos")]
