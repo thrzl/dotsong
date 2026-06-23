@@ -239,7 +239,7 @@ impl AppState {
                     _ => continue,
                 };
                 if !media_info.is_playing {
-                    if let Err(DiscordError::NotStarted) = client.clear_activity() {
+                    if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
                         eprintln!("discord presence update failed; rpc not connected");
                     };
                     continue;
@@ -281,14 +281,11 @@ impl AppState {
                                 }
                             })
                     });
-                    match activity_result {
-                        Err(DiscordError::NotStarted) => {
-                            eprintln!("discord presence update failed; rpc not connected");
-                        }
-                        _ => {}
+                    if matches!(activity_result, Err(DiscordError::NotStarted)) {
+                        eprintln!("discord presence update failed; rpc not connected");
                     }
                 } else {
-                    if let Err(DiscordError::NotStarted) = client.clear_activity() {
+                    if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
                         eprintln!("discord presence update failed; rpc not connected");
                     };
                 }
