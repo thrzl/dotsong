@@ -3,6 +3,7 @@ mod lastfm_auth;
 mod media_center;
 mod models;
 
+use discord_presence::DiscordError;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -109,10 +110,7 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
     if !resp.status().is_success() {
         return Err(format!("github returned {}", resp.status()));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("parse error: {e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
     let tag = json["tag_name"]
         .as_str()
         .ok_or_else(|| "no tag_name in release".to_string())?;
@@ -250,51 +248,64 @@ impl AppState {
                     _ => continue,
                 };
                 if !media_info.is_playing {
-                    client.clear_activity().unwrap();
+                    match client.clear_activity() {
+                        Err(DiscordError::NotStarted) => {
+                            eprintln!("discord presence update failed; rpc not connected");
+                        }
+                        _ => {}
+                    };
                     continue;
                 }
                 if media_info.title.is_some() && media_info.artist.is_some() {
-                    client
-                        .set_activity(|p| {
-                            p.activity_type(discord_presence::models::ActivityType::Listening)
-                                .status_display(discord_presence::models::DisplayType::State)
-                                .state(media_info.artist.clone().unwrap_or_default())
-                                .details(media_info.title.clone().unwrap_or_default())
-                                .assets(|assets| {
-                                    let assets = assets.large_image(
-                                        &media_info
-                                            .cover_artwork
-                                            .clone()
-                                            .unwrap_or("default".to_string()),
-                                    );
-                                    if let Some(album_name) = media_info.album.clone() {
-                                        assets.large_text(album_name)
-                                    } else {
-                                        assets
-                                    }
-                                })
-                                .timestamps(|timestamps| {
-                                    if let Some(elapsed_time) = media_info.elapsed_time {
-                                        let start_time = chrono::Utc::now()
-                                            - chrono::Duration::seconds(elapsed_time as i64);
+                    let activity_result = client.set_activity(|p| {
+                        p.activity_type(discord_presence::models::ActivityType::Listening)
+                            .status_display(discord_presence::models::DisplayType::State)
+                            .state(media_info.artist.clone().unwrap_or_default())
+                            .details(media_info.title.clone().unwrap_or_default())
+                            .assets(|assets| {
+                                let assets = assets.large_image(
+                                    &media_info
+                                        .cover_artwork
+                                        .clone()
+                                        .unwrap_or("default".to_string()),
+                                );
+                                if let Some(album_name) = media_info.album.clone() {
+                                    assets.large_text(album_name)
+                                } else {
+                                    assets
+                                }
+                            })
+                            .timestamps(|timestamps| {
+                                if let Some(elapsed_time) = media_info.elapsed_time {
+                                    let start_time = chrono::Utc::now()
+                                        - chrono::Duration::seconds(elapsed_time as i64);
 
-                                        if media_info.duration.is_some_and(|duration| duration > 0)
-                                        {
-                                            timestamps.start(start_time.timestamp() as u64).end(
-                                                media_info.duration.unwrap() as u64
-                                                    + start_time.timestamp() as u64,
-                                            )
-                                        } else {
-                                            timestamps.start(start_time.timestamp() as u64)
-                                        }
+                                    if media_info.duration.is_some_and(|duration| duration > 0) {
+                                        timestamps.start(start_time.timestamp() as u64).end(
+                                            media_info.duration.unwrap() as u64
+                                                + start_time.timestamp() as u64,
+                                        )
                                     } else {
-                                        timestamps
+                                        timestamps.start(start_time.timestamp() as u64)
                                     }
-                                })
-                        })
-                        .unwrap();
+                                } else {
+                                    timestamps
+                                }
+                            })
+                    });
+                    match activity_result {
+                        Err(DiscordError::NotStarted) => {
+                            eprintln!("discord presence update failed; rpc not connected");
+                        }
+                        _ => {}
+                    }
                 } else {
-                    client.clear_activity().unwrap();
+                    match client.clear_activity() {
+                        Err(DiscordError::NotStarted) => {
+                            eprintln!("discord presence update failed; rpc not connected");
+                        }
+                        _ => {}
+                    };
                 }
             }
         })
