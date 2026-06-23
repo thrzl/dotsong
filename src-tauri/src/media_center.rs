@@ -430,12 +430,13 @@ impl MediaCenter {
     }
 
     fn sanitize_apple_music_album_name(album_name: &str) -> String {
-        let patterns = [" - Single", " - EP"];
-
-        let mut sanitized_name = album_name.to_string();
-        for pattern in patterns {
-            sanitized_name = sanitized_name.replace(pattern, "");
-        }
+        let mut sanitized_name = album_name;
+        sanitized_name = sanitized_name
+            .strip_suffix(" - Single")
+            .unwrap_or(sanitized_name);
+        sanitized_name = sanitized_name
+            .strip_suffix(" - EP")
+            .unwrap_or(sanitized_name);
         sanitized_name.trim().to_string()
     }
 }
