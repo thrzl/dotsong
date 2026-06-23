@@ -2,6 +2,10 @@ use crate::models;
 use moka::future::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
+use std::sync::LazyLock;
+
+const CLEAN_TITLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(?(feat\.|ft\.)\s.+\)?").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct DeezerAlbum {
@@ -47,8 +51,7 @@ impl DeezerClient {
         track: &models::MediaInfo,
         apple_music: bool,
     ) -> Option<DeezerTrack> {
-        let clean_title = Regex::new(r"\(?(feat\.|ft\.)\s.+\)?")
-            .unwrap()
+        let clean_title = CLEAN_TITLE_RE
             .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
             .trim()
             .to_string();
