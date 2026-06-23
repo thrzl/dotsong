@@ -60,11 +60,13 @@ impl MediaCenter {
         self.track_tx.subscribe()
     }
 
-    fn should_broadcast_track(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
+    fn media_info_equal(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
+        // make sure it's even real
         let Some(previous) = previous else {
             return true;
         };
 
+        // check metadata
         if previous.title != current.title
             || previous.artist != current.artist
             || previous.is_playing != current.is_playing
@@ -72,12 +74,7 @@ impl MediaCenter {
             return true;
         }
 
-        match (previous.elapsed_time, current.elapsed_time) {
-            (Some(previous_elapsed), Some(current_elapsed)) => {
-                previous_elapsed.abs_diff(current_elapsed) >= 2
-            }
-            _ => false,
-        }
+        false
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -308,6 +305,7 @@ impl MediaCenter {
         let deezer_client = self.deezer_client.clone();
         let play_state_notify = self.play_state_notify.clone();
         let last_track = self.last_track.load_full();
+        let inner_self = self.clone();
 
         now_playing.subscribe(move |event| {
             let event = event.clone();
@@ -315,6 +313,7 @@ impl MediaCenter {
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
             let last_track = last_track.clone();
+            let inner_self = inner_self.clone();
             tauri::async_runtime::spawn(async move {
                 let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
@@ -341,7 +340,7 @@ impl MediaCenter {
                     .await
                     .unwrap_or(media_info);
 
-                if !Self::should_broadcast_track(last_track.as_deref(), &enriched_track) {
+                if !Self::media_info_equal(last_track.as_deref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
                         enriched_track.clone(),
                     )))
@@ -350,7 +349,7 @@ impl MediaCenter {
                     tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
                         .unwrap();
                 };
-                // last_track_handle.store(Arc::new(Some(enriched_track)));
+                inner_self.last_track.store(Some(Arc::new(enriched_track)));
                 play_state_notify.notify_one();
             });
         });
