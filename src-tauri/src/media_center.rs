@@ -107,25 +107,32 @@ impl MediaCenter {
                     | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
                     _ => continue,
                 };
-                let enriched = self
-                    .deezer_client
-                    .enrich_media_info(
-                        &media_info,
-                        player_name.to_lowercase().contains("applemusic"),
+                let last_track = self.last_track.load_full();
+                let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
+                let enriched = if same_track {
+                    last_track.as_ref().unwrap()
+                } else {
+                    &Arc::new(
+                        self.deezer_client
+                            .enrich_media_info(
+                                &media_info,
+                                player_name.to_lowercase().contains("applemusic"),
+                            )
+                            .await
+                            .unwrap_or(media_info),
                     )
-                    .await;
-                if !Self::should_broadcast_track(self.last_track.load_full().as_deref(), &enriched)
-                {
+                };
+                if Self::media_info_equal(self.last_track.load_full().as_deref(), &enriched) {
                     self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(enriched))
+                        .send(TrackUpdateEvent::PlaybackStateChange(enriched.clone()))
                         .unwrap();
                     continue;
                 }
                 self.elapsed_offset.store(0, Ordering::Relaxed);
-                self.last_track.store(Some(Arc::new(enriched.clone())));
+                self.last_track.store(Some(enriched.clone()));
                 self.play_state_notify.notify_one();
                 self.track_tx
-                    .send(TrackUpdateEvent::NewTrack(enriched))
+                    .send(TrackUpdateEvent::NewTrack(enriched.clone()))
                     .unwrap();
             }
         });
