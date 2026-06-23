@@ -142,7 +142,10 @@ impl DeezerClient {
         // so we'll go by character count instead of trying to split by a delimiter, which may not even be there
         let artist = if apple_music {
             if let Some(big_string) = media_info.artist.clone() {
-                big_string[..enriched_track.artist.len()].to_string()
+                big_string
+                    .get(..enriched_track.artist.len())
+                    .unwrap_or(&enriched_track.artist)
+                    .to_string()
             } else {
                 enriched_track.artist.clone()
             }
@@ -151,7 +154,11 @@ impl DeezerClient {
         };
         let album = if apple_music {
             if let Some(big_string) = media_info.album.clone() {
-                big_string[enriched_track.artist.len()..].trim().to_string()
+                big_string
+                    .get(enriched_track.artist.len()..)
+                    .unwrap_or(&enriched_track.album.title)
+                    .trim()
+                    .to_string()
             } else {
                 enriched_track.album.title.clone()
             }
