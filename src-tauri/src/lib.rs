@@ -80,8 +80,8 @@ async fn complete_librefm_auth(state: tauri::State<'_, AppState>) -> Result<Stri
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
-    current: String,
-    latest: String,
+    current: semver::Version,
+    latest: semver::Version,
     url: String,
     available: bool,
 }
@@ -100,7 +100,8 @@ fn get_app_version(app: tauri::AppHandle) -> String {
 
 #[tauri::command]
 async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
-    let current = app.package_info().version.to_string();
+    let current = semver::Version::parse(&app.package_info().version.to_string())
+        .map_err(|e| format!("invalid version string: {e}"))?;
     let url = "https://api.github.com/repos/thrzl/dotsong/releases/latest";
     let resp = crate::http::client()
         .get(url)
@@ -119,8 +120,9 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
     let html_url = json["html_url"]
         .as_str()
         .ok_or_else(|| "no html_url in release".to_string())?;
-    let latest = tag.trim_start_matches('v').to_string();
-    let available = parse_version(&latest) > parse_version(&current);
+    let latest = semver::Version::parse(&tag.trim_start_matches('v').to_string())
+        .map_err(|e| format!("invalid version string: {e}"))?;
+    let available = &latest > &current;
     Ok(UpdateInfo {
         current,
         latest,
