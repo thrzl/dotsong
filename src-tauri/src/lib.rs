@@ -133,21 +133,18 @@ async fn save_config(
     state: tauri::State<'_, AppState>,
     config: config::Config,
 ) -> Result<(), String> {
-    {
-        let mut config_lock = state.config.write();
+    // update internal config state
+    *state.config.write() = config.clone();
 
-        // set internal config state
-        *config_lock = config.clone();
+    if config.discord_rpc_enabled {
+        let mut task_lock = state.presence_task.lock();
 
-        // start/stop discord presence (if necessary)
-        if config.discord_rpc_enabled {
-            if state.presence_task.lock().is_none() {
-                *state.presence_task.lock() = Some(state.start_discord_presence());
-            }
-        } else {
-            println!("stopping discord presence");
-            state.stop_discord_presence();
+        if task_lock.is_none() {
+            *task_lock = Some(state.start_discord_presence());
         }
+    } else {
+        println!("stopping discord presence");
+        state.stop_discord_presence();
     }
     let config_path = &state.config_path;
     let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
