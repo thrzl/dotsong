@@ -167,7 +167,7 @@ impl DeezerClient {
                     media_info
                         .album
                         .clone()
-                        .unwrap_or(enriched_track.album.title.clone()),
+                        .unwrap_or(enriched_track.album.title),
                 )
             },
             artist: if apple_music {
