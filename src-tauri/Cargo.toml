@@ -40,6 +40,7 @@ dirs = "6.0.0"
 futures = "0.3.32"
 last-fm-rs = { git = "https://github.com/thrzl/last-fm-rs", version = "20260120.0.0" }
 semver = { version = "1.0.28", features = ["serde"] }
+arc-swap = "1.9.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media-remote = { version = "0.4.1", default-features = false }

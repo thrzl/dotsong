@@ -1,5 +1,6 @@
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
+use arc_swap::ArcSwap;
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
@@ -22,7 +23,7 @@ pub enum TrackUpdateEvent {
 pub struct MediaCenter {
     last_track: Arc<Mutex<Option<MediaInfo>>>,
     track_tx: watch::Sender<TrackUpdateEvent>,
-    scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
+    scrobblers: ArcSwap<Vec<Scrobbler>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     #[cfg(target_os = "macos")]
     macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
@@ -33,15 +34,14 @@ pub struct MediaCenter {
 
 impl MediaCenter {
     pub fn set_scrobblers(&self, scrobblers: Vec<Scrobbler>) {
-        let mut scrobblers_lock = self.scrobblers.lock();
-        *scrobblers_lock = scrobblers;
+        self.scrobblers.store(Arc::new(scrobblers));
     }
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
         let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
         MediaCenter {
             last_track: Arc::new(Mutex::new(None)),
             track_tx: tx,
-            scrobblers: Arc::new(Mutex::new(scrobblers)),
+            scrobblers: ArcSwap::new(Arc::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "macos")]
             macos_listener: Arc::new(Mutex::new(None)),
@@ -291,8 +291,7 @@ impl MediaCenter {
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
             tauri::async_runtime::spawn(async move {
-                let event = event.clone();
-                let Some(media) = event.clone() else { return };
+                let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
                     return;
                 }
@@ -337,7 +336,7 @@ impl MediaCenter {
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
         println!("starting scrobbling task");
-        let scrobblers = self.scrobblers.clone();
+        let scrobblers = self.scrobblers.load_full();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
         if let Some(task_handle) = task_guard.take() {
@@ -345,18 +344,16 @@ impl MediaCenter {
         };
         println!(
             "spawning scrobbling task with {} scrobblers",
-            scrobblers.lock().len()
+            scrobblers.len()
         );
         *task_guard = Some(tauri::async_runtime::spawn(async move {
             let scrobblers = scrobblers.clone();
-            let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
+            let mut last_scrobble: Option<MediaInfo> = None;
             loop {
-                let scrobblers = scrobblers.lock().clone();
                 let event = match rx.changed().await {
                     Ok(()) => rx.borrow_and_update().clone(),
                     _ => break,
                 };
-                let last_track = last_scrobble.lock().clone();
                 match event {
                     TrackUpdateEvent::NewTrack(track) => {
                         // when it's a new track, we do now playing
@@ -372,7 +369,7 @@ impl MediaCenter {
                             continue;
                         }
                         if track.elapsed_time.unwrap() > (track.duration.unwrap() / 2) {
-                            let already_scrobbled = if let Some(last_track) = last_track {
+                            let already_scrobbled = if let Some(last_track) = &last_scrobble {
                                 // if the last scrobbled track was over 50%, we already did now playing
                                 last_track.title == track.title
                                     && last_track.album == track.album
@@ -391,7 +388,7 @@ impl MediaCenter {
                                     .map(|scrobbler| scrobbler.scrobble(&track)),
                             )
                             .await;
-                        } else if last_track.is_none() {
+                        } else if last_scrobble.is_none() {
                             futures::future::join_all(
                                 scrobblers
                                     .iter()
@@ -399,7 +396,7 @@ impl MediaCenter {
                             )
                             .await;
                         }
-                        last_scrobble.lock().replace(track.clone());
+                        last_scrobble.replace(track.clone());
                     }
                     _ => {}
                 };
