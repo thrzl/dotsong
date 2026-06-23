@@ -1,4 +1,5 @@
 mod config;
+mod http;
 mod lastfm_auth;
 mod media_center;
 mod models;
@@ -101,7 +102,7 @@ fn get_app_version(app: tauri::AppHandle) -> String {
 async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
     let url = "https://api.github.com/repos/thrzl/dotsong/releases/latest";
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get(url)
         .header("User-Agent", "thrzl/dotsong")
         .header("Accept", "application/vnd.github+json")

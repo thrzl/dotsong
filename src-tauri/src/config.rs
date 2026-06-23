@@ -28,7 +28,7 @@ impl Scrobbler {
         );
         let scrobble =
             listenbrainz::Scrobble::from_media_info(track, listenbrainz::ListenType::Single);
-        reqwest::Client::new()
+        crate::http::client()
             .post(format!(
                 "{}/submit-listens",
                 self.endpoint_url.trim_end_matches("/")
@@ -79,7 +79,7 @@ impl Scrobbler {
         );
         let scrobble =
             listenbrainz::Scrobble::from_media_info(track, listenbrainz::ListenType::PlayingNow); // quiet warnings about unused variable
-        let res = reqwest::Client::new()
+        let res = crate::http::client()
             .post(format!(
                 "{}/submit-listens",
                 self.endpoint_url.trim_end_matches("/")
@@ -137,8 +137,11 @@ impl Scrobbler {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let client = match Client::new(lastfm_auth::LIBREFM_API_KEY, lastfm_auth::LIBREFM_API_SECRET)
-            .with_api_base(&self.endpoint_url)
+        let client = match Client::new(
+            lastfm_auth::LIBREFM_API_KEY,
+            lastfm_auth::LIBREFM_API_SECRET,
+        )
+        .with_api_base(&self.endpoint_url)
         {
             Ok(c) => c.with_session_key(&self.api_key),
             Err(e) => {
@@ -173,8 +176,11 @@ impl Scrobbler {
             track.artist.clone().unwrap_or_default(),
             track.title.clone().unwrap_or_default()
         );
-        let client = match Client::new(lastfm_auth::LIBREFM_API_KEY, lastfm_auth::LIBREFM_API_SECRET)
-            .with_api_base(&self.endpoint_url)
+        let client = match Client::new(
+            lastfm_auth::LIBREFM_API_KEY,
+            lastfm_auth::LIBREFM_API_SECRET,
+        )
+        .with_api_base(&self.endpoint_url)
         {
             Ok(c) => c.with_session_key(&self.api_key),
             Err(e) => {

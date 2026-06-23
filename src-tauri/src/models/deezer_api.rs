@@ -1,3 +1,4 @@
+use crate::http;
 use crate::models;
 use moka::future::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
@@ -69,7 +70,7 @@ impl DeezerClient {
             return Some(cached_track.clone());
         }
         let url = format!("https://api.deezer.com/search?q={}", query);
-        let response = reqwest::get(url).await.ok()?;
+        let response = http::client().get(url).send().await.ok()?;
         if !response.status().is_success() {
             return None;
         }
