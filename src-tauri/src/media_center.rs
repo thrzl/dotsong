@@ -4,6 +4,7 @@ use arc_swap::ArcSwap;
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
@@ -21,7 +22,8 @@ pub enum TrackUpdateEvent {
 }
 
 pub struct MediaCenter {
-    last_track: Arc<Mutex<Option<MediaInfo>>>,
+    last_track: ArcSwap<Option<MediaInfo>>,
+    elapsed_offset: Arc<AtomicU32>,
     track_tx: watch::Sender<TrackUpdateEvent>,
     scrobblers: ArcSwap<Vec<Scrobbler>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
@@ -39,7 +41,8 @@ impl MediaCenter {
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
         let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
         MediaCenter {
-            last_track: Arc::new(Mutex::new(None)),
+            last_track: ArcSwap::from(Arc::new(None)),
+            elapsed_offset: Arc::new(AtomicU32::new(0)),
             track_tx: tx,
             scrobblers: ArcSwap::new(Arc::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
@@ -111,13 +114,17 @@ impl MediaCenter {
                         player_name.to_lowercase().contains("applemusic"),
                     )
                     .await;
-                if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
+                if !Self::should_broadcast_track(
+                    self.last_track.load_full().as_ref().as_ref(),
+                    &enriched,
+                ) {
                     self.track_tx
                         .send(TrackUpdateEvent::PlaybackStateChange(enriched))
                         .unwrap();
                     continue;
                 }
-                self.last_track.lock().replace(enriched.clone());
+                self.elapsed_offset.store(0, Ordering::Relaxed);
+                self.last_track.store(Arc::new(Some(enriched.clone())));
                 self.play_state_notify.notify_one();
                 self.track_tx
                     .send(TrackUpdateEvent::NewTrack(enriched))
@@ -240,7 +247,8 @@ impl MediaCenter {
 
     fn start_position_ticker(self: &Arc<Self>) {
         let tx = self.track_tx.clone();
-        let last_track = self.last_track.clone();
+        let last_track = self.last_track.load();
+        let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
         let tick = Duration::from_secs(5);
 
@@ -249,26 +257,43 @@ impl MediaCenter {
             loop {
                 if !is_playing {
                     play_state.notified().await;
-                    is_playing = last_track.lock().as_ref().is_some_and(|t| t.is_playing);
+                    is_playing = last_track.as_ref().as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(tick) => {
-                        let mut last_track_guard = last_track.lock();
-                        if let Some(track) = last_track_guard.as_mut() {
-                            if !track.is_playing { is_playing = false; continue; }
-
-                            // if its playing then update the time
-                            if let Some(elapsed_time) = track.elapsed_time.as_mut() {
-                                *elapsed_time += tick.as_secs() as u32;
-                            }
-                            let snapshot = track.clone();
-                            drop(last_track_guard);
-                            let _ = tx.send(TrackUpdateEvent::PositionChanged(snapshot));
+                        let snapshot = last_track.clone();
+                        let Some(base) = snapshot.as_ref().as_ref() else {
+                            is_playing = false;
+                            continue;
+                        };
+                        if !base.is_playing {
+                            is_playing = false;
+                            continue;
                         }
+
+                        elapsed_offset.fetch_add(tick.as_secs() as u32, Ordering::Relaxed);
+                        let offset = elapsed_offset.load(Ordering::Relaxed);
+                        let base_elapsed = base.elapsed_time.unwrap_or(0);
+                        let effective = base_elapsed.saturating_add(offset);
+
+                        let arc_track = Arc::unwrap_or_clone(snapshot.clone());
+                        let Some(mut track) = arc_track else {
+                            is_playing = false;
+                            continue;
+                        };
+                        track.elapsed_time = Some(effective);
+                        let _ = tx.send(TrackUpdateEvent::PositionChanged(track));
                     }
                     _ = play_state.notified() => {
-                        is_playing = last_track.lock().as_ref().is_some_and(|track| track.is_playing);
+                        // A media event arrived. Whatever it said is the new
+                        // ground truth; reset our offset so the next tick
+                        // adds on top of the OS-reported position.
+                        elapsed_offset.store(0, Ordering::Relaxed);
+                        is_playing = last_track
+                            .as_ref()
+                            .as_ref()
+                            .is_some_and(|t| t.is_playing);
                     }
                 }
             }
@@ -280,16 +305,16 @@ impl MediaCenter {
         println!("starting media poller");
         let tx = self.track_tx.clone();
         let now_playing = media_remote::NowPlayingPerl::new();
-        let last_track_ptr = self.last_track.clone();
         let deezer_client = self.deezer_client.clone();
         let play_state_notify = self.play_state_notify.clone();
+        let last_track = self.last_track.load_full();
 
         now_playing.subscribe(move |event| {
             let event = event.clone();
-            let last_track_ptr = last_track_ptr.clone();
             let tx = tx.clone();
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
+            let last_track = last_track.clone();
             tauri::async_runtime::spawn(async move {
                 let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
@@ -315,7 +340,7 @@ impl MediaCenter {
                     .enrich_media_info(&media_info_clone, false)
                     .await;
 
-                if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
+                if !Self::should_broadcast_track(last_track.as_ref().as_ref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(
                         enriched_track.clone(),
                     ))
@@ -324,7 +349,7 @@ impl MediaCenter {
                     tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                         .unwrap();
                 };
-                last_track_ptr.lock().replace(enriched_track.clone());
+                // last_track_handle.store(Arc::new(Some(enriched_track)));
                 play_state_notify.notify_one();
             });
         });
