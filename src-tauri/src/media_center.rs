@@ -360,9 +360,12 @@ impl MediaCenter {
                 match event {
                     TrackUpdateEvent::NewTrack(track) => {
                         // when it's a new track, we do now playing
-                        for scrobbler in &scrobblers.clone() {
-                            scrobbler.now_playing(&track).await;
-                        }
+                        futures::future::join_all(
+                            scrobblers
+                                .iter()
+                                .map(|scrobbler| scrobbler.now_playing(&track)),
+                        )
+                        .await;
                     }
                     TrackUpdateEvent::PositionChanged(track) => {
                         if track.elapsed_time.is_none() || track.duration.is_none() {
@@ -382,13 +385,19 @@ impl MediaCenter {
                             if already_scrobbled {
                                 continue;
                             }
-                            for scrobbler in &scrobblers.clone() {
-                                scrobbler.scrobble(&track).await;
-                            }
+                            futures::future::join_all(
+                                scrobblers
+                                    .iter()
+                                    .map(|scrobbler| scrobbler.scrobble(&track)),
+                            )
+                            .await;
                         } else if last_track.is_none() {
-                            for scrobbler in &scrobblers.clone() {
-                                scrobbler.now_playing(&track).await;
-                            }
+                            futures::future::join_all(
+                                scrobblers
+                                    .iter()
+                                    .map(|scrobbler| scrobbler.now_playing(&track)),
+                            )
+                            .await;
                         }
                         last_scrobble.lock().replace(track.clone());
                     }
