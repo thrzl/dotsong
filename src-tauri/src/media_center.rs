@@ -1,6 +1,6 @@
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
@@ -22,7 +22,7 @@ pub enum TrackUpdateEvent {
 }
 
 pub struct MediaCenter {
-    last_track: ArcSwap<Option<MediaInfo>>,
+    last_track: ArcSwapOption<MediaInfo>,
     elapsed_offset: Arc<AtomicU32>,
     track_tx: watch::Sender<TrackUpdateEvent>,
     scrobblers: ArcSwap<Vec<Scrobbler>>,
@@ -41,7 +41,7 @@ impl MediaCenter {
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
         let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
         MediaCenter {
-            last_track: ArcSwap::from(Arc::new(None)),
+            last_track: ArcSwapOption::from(None),
             elapsed_offset: Arc::new(AtomicU32::new(0)),
             track_tx: tx,
             scrobblers: ArcSwap::new(Arc::new(scrobblers)),
@@ -257,13 +257,13 @@ impl MediaCenter {
             loop {
                 if !is_playing {
                     play_state.notified().await;
-                    is_playing = last_track.as_ref().as_ref().is_some_and(|t| t.is_playing);
+                    is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(tick) => {
                         let snapshot = last_track.clone();
-                        let Some(base) = snapshot.as_ref().as_ref() else {
+                        let Some(base) = snapshot.as_ref() else {
                             is_playing = false;
                             continue;
                         };
@@ -277,8 +277,9 @@ impl MediaCenter {
                         let base_elapsed = base.elapsed_time.unwrap_or(0);
                         let effective = base_elapsed.saturating_add(offset);
 
-                        let arc_track = Arc::unwrap_or_clone(snapshot.clone());
-                        let Some(mut track) = arc_track else {
+                        let mut track = if snapshot.is_some() {
+                            Arc::unwrap_or_clone(snapshot.unwrap())
+                        } else {
                             is_playing = false;
                             continue;
                         };
@@ -290,9 +291,7 @@ impl MediaCenter {
                         // ground truth; reset our offset so the next tick
                         // adds on top of the OS-reported position.
                         elapsed_offset.store(0, Ordering::Relaxed);
-                        is_playing = last_track
-                            .as_ref()
-                            .as_ref()
+                        is_playing = last_track.as_ref()
                             .is_some_and(|t| t.is_playing);
                     }
                 }
@@ -340,7 +339,7 @@ impl MediaCenter {
                     .enrich_media_info(&media_info_clone, false)
                     .await;
 
-                if !Self::should_broadcast_track(last_track.as_ref().as_ref(), &enriched_track) {
+                if !Self::should_broadcast_track(last_track.as_deref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(
                         enriched_track.clone(),
                     ))
