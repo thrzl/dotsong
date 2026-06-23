@@ -4,6 +4,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -16,9 +17,9 @@ use nowhear::MediaSource;
 
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
-    NewTrack(MediaInfo),
-    PlaybackStateChange(MediaInfo),
-    PositionChanged(MediaInfo),
+    NewTrack(Arc<MediaInfo>),
+    PlaybackStateChange(Arc<MediaInfo>),
+    PositionChanged(Arc<MediaInfo>),
 }
 
 pub struct MediaCenter {
@@ -39,7 +40,9 @@ impl MediaCenter {
         self.scrobblers.store(Arc::new(scrobblers));
     }
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
-        let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
+        let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+            MediaInfo::default(),
+        )));
         MediaCenter {
             last_track: ArcSwapOption::from(None),
             elapsed_offset: Arc::new(AtomicU32::new(0)),
@@ -282,7 +285,7 @@ impl MediaCenter {
                             continue;
                         };
                         track.elapsed_time = Some(effective);
-                        let _ = tx.send(TrackUpdateEvent::PositionChanged(track));
+                        let _ = tx.send(TrackUpdateEvent::PositionChanged(Arc::new(track)));
                     }
                     _ = play_state.notified() => {
                         // A media event arrived. Whatever it said is the new
@@ -339,12 +342,12 @@ impl MediaCenter {
                     .unwrap_or(media_info);
 
                 if !Self::should_broadcast_track(last_track.as_deref(), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
                         enriched_track.clone(),
-                    ))
+                    )))
                     .unwrap();
                 } else {
-                    tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                    tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
                         .unwrap();
                 };
                 // last_track_handle.store(Arc::new(Some(enriched_track)));
@@ -419,7 +422,7 @@ impl MediaCenter {
                             )
                             .await;
                         }
-                        last_scrobble.replace(track.clone());
+                        last_scrobble.replace(track.deref().clone());
                     }
                     _ => {}
                 };
