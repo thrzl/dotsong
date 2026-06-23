@@ -150,7 +150,9 @@ impl MediaCenter {
                 };
                 Some(MediaInfo {
                     title: Some(track.title),
-                    album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
+                    album: track
+                        .album
+                        .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: Some(artist.join(", ")),
                     elapsed_time: None,
                     cover_artwork: track.art_url,
@@ -174,7 +176,9 @@ impl MediaCenter {
                         };
                         MediaInfo {
                             title: Some(track.title),
-                            album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
+                            album: track
+                                .album
+                                .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: Some(position.as_secs() as u32),
                             cover_artwork: track.art_url,
@@ -210,7 +214,9 @@ impl MediaCenter {
                         };
                         MediaInfo {
                             title: Some(track.title),
-                            album: track.album.map(|album| Self::sanitize_apple_music_album_name(&album)),
+                            album: track
+                                .album
+                                .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: player.position.map(|p| p.as_secs() as u32),
                             cover_artwork: track.art_url,
@@ -348,7 +354,7 @@ impl MediaCenter {
                 let scrobblers = scrobblers.lock().clone();
                 let event = match rx.changed().await {
                     Ok(()) => rx.borrow_and_update().clone(),
-                    _ => continue,
+                    _ => break,
                 };
                 let last_track = last_scrobble.lock().clone();
                 match event {
