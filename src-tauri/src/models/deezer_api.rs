@@ -5,7 +5,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
 use std::sync::LazyLock;
 
-const CLEAN_TITLE_RE: LazyLock<Regex> =
+static CLEAN_TITLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(?(feat\.|ft\.)\s.+\)?").unwrap());
 
 #[derive(Debug, Clone)]
