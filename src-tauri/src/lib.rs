@@ -134,13 +134,11 @@ async fn save_config(
 ) -> Result<(), String> {
     {
         let mut config_lock = state.config.lock();
+
+        // set internal config state
         *config_lock = config.clone();
-    }
-    let config_path = &state.config_path;
-    let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
-    {
-        // stop discord task if running
-        let config = state.config.lock();
+
+        // start/stop discord presence (if necessary)
         if config.discord_rpc_enabled {
             if state.presence_task.lock().is_none() {
                 *state.presence_task.lock() = Some(state.start_discord_presence());
@@ -150,6 +148,8 @@ async fn save_config(
             state.stop_discord_presence();
         }
     }
+    let config_path = &state.config_path;
+    let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
     state.media_center.set_scrobblers(config.scrobblers.clone());
     println!("writing config");
     tokio::fs::write(config_path, config_str)
