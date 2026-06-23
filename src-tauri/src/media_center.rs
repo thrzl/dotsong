@@ -199,10 +199,7 @@ impl MediaCenter {
                     },
                 })
             }
-            nowhear::MediaEvent::StateChanged {
-                player_name,
-                state: _,
-            } => {
+            nowhear::MediaEvent::StateChanged { player_name, .. } => {
                 let player = now_playing.get_player(&player_name).await.ok()?;
                 Some(match player.current_track {
                     Some(track) => {

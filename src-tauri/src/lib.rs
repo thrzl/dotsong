@@ -134,7 +134,7 @@ async fn save_config(
     config: config::Config,
 ) -> Result<(), String> {
     // update internal config state
-    *state.config.write() = config.clone();
+    state.config.write().clone_from(&config);
 
     if config.discord_rpc_enabled {
         let mut task_lock = state.presence_task.lock();
@@ -239,11 +239,8 @@ impl AppState {
                     _ => continue,
                 };
                 if !media_info.is_playing {
-                    match client.clear_activity() {
-                        Err(DiscordError::NotStarted) => {
-                            eprintln!("discord presence update failed; rpc not connected");
-                        }
-                        _ => {}
+                    if let Err(DiscordError::NotStarted) = client.clear_activity() {
+                        eprintln!("discord presence update failed; rpc not connected");
                     };
                     continue;
                 }
@@ -258,7 +255,7 @@ impl AppState {
                                     &media_info
                                         .cover_artwork
                                         .clone()
-                                        .unwrap_or("default".to_string()),
+                                        .unwrap_or_else(|| "default".to_string()),
                                 );
                                 if let Some(album_name) = media_info.album.clone() {
                                     assets.large_text(album_name)
@@ -291,11 +288,8 @@ impl AppState {
                         _ => {}
                     }
                 } else {
-                    match client.clear_activity() {
-                        Err(DiscordError::NotStarted) => {
-                            eprintln!("discord presence update failed; rpc not connected");
-                        }
-                        _ => {}
+                    if let Err(DiscordError::NotStarted) = client.clear_activity() {
+                        eprintln!("discord presence update failed; rpc not connected");
                     };
                 }
             }
@@ -430,7 +424,7 @@ pub fn run() {
         }
         tauri::RunEvent::WindowEvent { label, event, .. } => {
             if label == "main" {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                     #[cfg(target_os = "macos")]
                     _app.set_activation_policy(tauri::ActivationPolicy::Accessory)
                         .ok();
