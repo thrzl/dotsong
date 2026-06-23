@@ -248,16 +248,12 @@ impl AppState {
                     let activity_result = client.set_activity(|p| {
                         p.activity_type(discord_presence::models::ActivityType::Listening)
                             .status_display(discord_presence::models::DisplayType::State)
-                            .state(media_info.artist.clone().unwrap_or_default())
-                            .details(media_info.title.clone().unwrap_or_default())
+                            .state(media_info.artist())
+                            .details(media_info.title())
                             .assets(|assets| {
-                                let assets = assets.large_image(
-                                    &media_info
-                                        .cover_artwork
-                                        .clone()
-                                        .unwrap_or_else(|| "default".to_string()),
-                                );
-                                if let Some(album_name) = media_info.album.clone() {
+                                let assets = assets.large_image(media_info.cover_artwork());
+                                let album_name = media_info.album();
+                                if !album_name.is_empty() {
                                     assets.large_text(album_name)
                                 } else {
                                     assets

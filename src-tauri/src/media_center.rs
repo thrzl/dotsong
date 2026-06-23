@@ -335,7 +335,8 @@ impl MediaCenter {
                 let media_info_clone = media_info.clone();
                 let enriched_track = deezer_client
                     .enrich_media_info(&media_info_clone, false)
-                    .await;
+                    .await
+                    .unwrap_or(media_info);
 
                 if !Self::should_broadcast_track(last_track.as_deref(), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(
