@@ -5,7 +5,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
 use std::sync::LazyLock;
 
-const CLEAN_TITLE_RE: LazyLock<Regex> =
+static CLEAN_TITLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(?(feat\.|ft\.)\s.+\)?").unwrap());
 
 #[derive(Debug, Clone)]
@@ -62,7 +62,7 @@ impl DeezerClient {
         )
         .to_string();
         if let Some(cached_track) = self.cache.get(&query).await {
-            return Some(cached_track.clone());
+            return Some(cached_track);
         }
         let url = format!("https://api.deezer.com/search?q={}", query);
         let response = http::client().get(url).send().await.ok()?;
@@ -88,12 +88,7 @@ impl DeezerClient {
         } else {
             found_tracks.iter().find(|t| {
                 t["album"]["title"].as_str().map(|s| s.to_lowercase())
-                    == track
-                        .album
-                        .clone()
-                        .unwrap_or_default()
-                        .to_lowercase()
-                        .into()
+                    == track.album().to_lowercase().into()
             })
         }?;
         let title_matches = track_info["title"].as_str().map(|s| s.to_lowercase())
@@ -133,43 +128,40 @@ impl DeezerClient {
         &self,
         media_info: &models::MediaInfo,
         apple_music: bool,
-    ) -> models::MediaInfo {
-        let enriched_track = match self.track_search(media_info, apple_music).await {
-            Some(track) => track,
-            None => return media_info.clone(),
-        };
+    ) -> Option<models::MediaInfo> {
+        let enriched_track = self.track_search(media_info, apple_music).await?;
         // if it's apple music, trust deezer more than the player
         // apple music artist field may look like this: "artist name album name" with no delimiter.
         // so we'll go by character count instead of trying to split by a delimiter, which may not even be there
         let artist = if apple_music {
-            if let Some(big_string) = media_info.artist.clone() {
+            let big_string = media_info.artist();
+            if !big_string.is_empty() {
                 big_string
                     .get(..enriched_track.artist.len())
                     .unwrap_or(&enriched_track.artist)
-                    .to_string()
             } else {
-                enriched_track.artist.clone()
+                &enriched_track.artist
             }
         } else {
-            enriched_track.artist.clone()
+            &enriched_track.artist
         };
         let album = if apple_music {
-            if let Some(big_string) = media_info.album.clone() {
+            let big_string = media_info.album();
+            if !big_string.is_empty() {
                 big_string
                     .get(enriched_track.artist.len()..)
                     .unwrap_or(&enriched_track.album.title)
                     .trim()
-                    .to_string()
             } else {
-                enriched_track.album.title.clone()
+                &enriched_track.album.title
             }
         } else {
-            enriched_track.album.title.clone()
+            &enriched_track.album.title
         };
-        models::MediaInfo {
+        Some(models::MediaInfo {
             title: Some(media_info.title.clone().unwrap_or(enriched_track.title)),
             album: if apple_music {
-                Some(album)
+                Some(album.to_string())
             } else {
                 Some(
                     media_info
@@ -179,7 +171,7 @@ impl DeezerClient {
                 )
             },
             artist: if apple_music {
-                Some(artist)
+                Some(artist.to_string())
             } else {
                 Some(media_info.artist.clone().unwrap_or(enriched_track.artist))
             },
@@ -192,6 +184,6 @@ impl DeezerClient {
                 media_info.duration.or(Some(enriched_track.duration as u32))
             },
             isrc: enriched_track.isrc,
-        }
+        })
     }
 }

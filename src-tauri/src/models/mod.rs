@@ -23,6 +23,9 @@ impl MediaInfo {
     pub fn album(&self) -> &str {
         self.album.as_deref().unwrap_or_default()
     }
+    pub fn cover_artwork(&self) -> &str {
+        self.cover_artwork.as_deref().unwrap_or_default()
+    }
 }
 
 impl Default for MediaInfo {

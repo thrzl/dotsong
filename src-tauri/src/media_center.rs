@@ -1,8 +1,11 @@
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
+use arc_swap::{ArcSwap, ArcSwapOption};
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
 use parking_lot::Mutex;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
@@ -14,15 +17,16 @@ use nowhear::MediaSource;
 
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
-    NewTrack(MediaInfo),
-    PlaybackStateChange(MediaInfo),
-    PositionChanged(MediaInfo),
+    NewTrack(Arc<MediaInfo>),
+    PlaybackStateChange(Arc<MediaInfo>),
+    PositionChanged(Arc<MediaInfo>),
 }
 
 pub struct MediaCenter {
-    last_track: Arc<Mutex<Option<MediaInfo>>>,
+    last_track: ArcSwapOption<MediaInfo>,
+    elapsed_offset: Arc<AtomicU32>,
     track_tx: watch::Sender<TrackUpdateEvent>,
-    scrobblers: Arc<Mutex<Vec<Scrobbler>>>,
+    scrobblers: ArcSwap<Vec<Scrobbler>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     #[cfg(target_os = "macos")]
     macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
@@ -33,15 +37,17 @@ pub struct MediaCenter {
 
 impl MediaCenter {
     pub fn set_scrobblers(&self, scrobblers: Vec<Scrobbler>) {
-        let mut scrobblers_lock = self.scrobblers.lock();
-        *scrobblers_lock = scrobblers;
+        self.scrobblers.store(Arc::new(scrobblers));
     }
     pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
-        let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(MediaInfo::default()));
+        let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+            MediaInfo::default(),
+        )));
         MediaCenter {
-            last_track: Arc::new(Mutex::new(None)),
+            last_track: ArcSwapOption::from(None),
+            elapsed_offset: Arc::new(AtomicU32::new(0)),
             track_tx: tx,
-            scrobblers: Arc::new(Mutex::new(scrobblers)),
+            scrobblers: ArcSwap::new(Arc::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "macos")]
             macos_listener: Arc::new(Mutex::new(None)),
@@ -54,24 +60,21 @@ impl MediaCenter {
         self.track_tx.subscribe()
     }
 
-    fn should_broadcast_track(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
+    fn media_info_equal(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
+        // make sure it's even real
         let Some(previous) = previous else {
-            return true;
+            return false;
         };
 
+        // check metadata
         if previous.title != current.title
             || previous.artist != current.artist
             || previous.is_playing != current.is_playing
         {
-            return true;
+            return false;
         }
 
-        match (previous.elapsed_time, current.elapsed_time) {
-            (Some(previous_elapsed), Some(current_elapsed)) => {
-                previous_elapsed.abs_diff(current_elapsed) >= 2
-            }
-            _ => false,
-        }
+        true
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -104,23 +107,32 @@ impl MediaCenter {
                     | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
                     _ => continue,
                 };
-                let enriched = self
-                    .deezer_client
-                    .enrich_media_info(
-                        &media_info,
-                        player_name.to_lowercase().contains("applemusic"),
+                let last_track = self.last_track.load_full();
+                let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
+                let enriched = if same_track {
+                    last_track.as_ref().unwrap()
+                } else {
+                    &Arc::new(
+                        self.deezer_client
+                            .enrich_media_info(
+                                &media_info,
+                                player_name.to_lowercase().contains("applemusic"),
+                            )
+                            .await
+                            .unwrap_or(media_info),
                     )
-                    .await;
-                if !Self::should_broadcast_track(self.last_track.lock().as_ref(), &enriched) {
+                };
+                if Self::media_info_equal(self.last_track.load_full().as_deref(), &enriched) {
                     self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(enriched))
+                        .send(TrackUpdateEvent::PlaybackStateChange(enriched.clone()))
                         .unwrap();
                     continue;
                 }
-                self.last_track.lock().replace(enriched.clone());
+                self.elapsed_offset.store(0, Ordering::Relaxed);
+                self.last_track.store(Some(enriched.clone()));
                 self.play_state_notify.notify_one();
                 self.track_tx
-                    .send(TrackUpdateEvent::NewTrack(enriched))
+                    .send(TrackUpdateEvent::NewTrack(enriched.clone()))
                     .unwrap();
             }
         });
@@ -240,7 +252,8 @@ impl MediaCenter {
 
     fn start_position_ticker(self: &Arc<Self>) {
         let tx = self.track_tx.clone();
-        let last_track = self.last_track.clone();
+        let last_track = self.last_track.load();
+        let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
         let tick = Duration::from_secs(5);
 
@@ -249,26 +262,42 @@ impl MediaCenter {
             loop {
                 if !is_playing {
                     play_state.notified().await;
-                    is_playing = last_track.lock().as_ref().is_some_and(|t| t.is_playing);
+                    is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(tick) => {
-                        let mut last_track_guard = last_track.lock();
-                        if let Some(track) = last_track_guard.as_mut() {
-                            if !track.is_playing { is_playing = false; continue; }
-
-                            // if its playing then update the time
-                            if let Some(elapsed_time) = track.elapsed_time.as_mut() {
-                                *elapsed_time += tick.as_secs() as u32;
-                            }
-                            let snapshot = track.clone();
-                            drop(last_track_guard);
-                            let _ = tx.send(TrackUpdateEvent::PositionChanged(snapshot));
+                        let snapshot = last_track.clone();
+                        let Some(base) = snapshot.as_ref() else {
+                            is_playing = false;
+                            continue;
+                        };
+                        if !base.is_playing {
+                            is_playing = false;
+                            continue;
                         }
+
+                        elapsed_offset.fetch_add(tick.as_secs() as u32, Ordering::Relaxed);
+                        let offset = elapsed_offset.load(Ordering::Relaxed);
+                        let base_elapsed = base.elapsed_time.unwrap_or(0);
+                        let effective = base_elapsed.saturating_add(offset);
+
+                        let mut track = if snapshot.is_some() {
+                            Arc::unwrap_or_clone(snapshot.unwrap())
+                        } else {
+                            is_playing = false;
+                            continue;
+                        };
+                        track.elapsed_time = Some(effective);
+                        let _ = tx.send(TrackUpdateEvent::PositionChanged(Arc::new(track)));
                     }
                     _ = play_state.notified() => {
-                        is_playing = last_track.lock().as_ref().is_some_and(|track| track.is_playing);
+                        // A media event arrived. Whatever it said is the new
+                        // ground truth; reset our offset so the next tick
+                        // adds on top of the OS-reported position.
+                        elapsed_offset.store(0, Ordering::Relaxed);
+                        is_playing = last_track.as_ref()
+                            .is_some_and(|t| t.is_playing);
                     }
                 }
             }
@@ -280,19 +309,20 @@ impl MediaCenter {
         println!("starting media poller");
         let tx = self.track_tx.clone();
         let now_playing = media_remote::NowPlayingPerl::new();
-        let last_track_ptr = self.last_track.clone();
         let deezer_client = self.deezer_client.clone();
         let play_state_notify = self.play_state_notify.clone();
+        let last_track = self.last_track.load_full();
+        let inner_self = self.clone();
 
         now_playing.subscribe(move |event| {
             let event = event.clone();
-            let last_track_ptr = last_track_ptr.clone();
             let tx = tx.clone();
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
+            let last_track = last_track.clone();
+            let inner_self = inner_self.clone();
             tauri::async_runtime::spawn(async move {
-                let event = event.clone();
-                let Some(media) = event.clone() else { return };
+                let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
                     return;
                 }
@@ -312,11 +342,18 @@ impl MediaCenter {
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
-                let enriched_track = deezer_client
-                    .enrich_media_info(&media_info_clone, false)
-                    .await;
+                let enriched_track = if Self::media_info_equal(last_track.as_deref(), &media_info) {
+                    last_track.as_ref().unwrap()
+                } else {
+                    &Arc::new(
+                        deezer_client
+                            .enrich_media_info(&media_info_clone, false)
+                            .await
+                            .unwrap_or(media_info),
+                    )
+                };
 
-                if !Self::should_broadcast_track(last_track_ptr.lock().as_ref(), &enriched_track) {
+                if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
                     tx.send(TrackUpdateEvent::PlaybackStateChange(
                         enriched_track.clone(),
                     ))
@@ -325,7 +362,7 @@ impl MediaCenter {
                     tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                         .unwrap();
                 };
-                last_track_ptr.lock().replace(enriched_track.clone());
+                inner_self.last_track.store(Some(enriched_track.clone()));
                 play_state_notify.notify_one();
             });
         });
@@ -337,7 +374,7 @@ impl MediaCenter {
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
         println!("starting scrobbling task");
-        let scrobblers = self.scrobblers.clone();
+        let scrobblers = self.scrobblers.load_full();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
         if let Some(task_handle) = task_guard.take() {
@@ -345,18 +382,16 @@ impl MediaCenter {
         };
         println!(
             "spawning scrobbling task with {} scrobblers",
-            scrobblers.lock().len()
+            scrobblers.len()
         );
         *task_guard = Some(tauri::async_runtime::spawn(async move {
             let scrobblers = scrobblers.clone();
-            let last_scrobble = Arc::new(Mutex::new(None::<MediaInfo>));
+            let mut last_scrobble: Option<MediaInfo> = None;
             loop {
-                let scrobblers = scrobblers.lock().clone();
                 let event = match rx.changed().await {
                     Ok(()) => rx.borrow_and_update().clone(),
                     _ => break,
                 };
-                let last_track = last_scrobble.lock().clone();
                 match event {
                     TrackUpdateEvent::NewTrack(track) => {
                         // when it's a new track, we do now playing
@@ -372,7 +407,7 @@ impl MediaCenter {
                             continue;
                         }
                         if track.elapsed_time.unwrap() > (track.duration.unwrap() / 2) {
-                            let already_scrobbled = if let Some(last_track) = last_track {
+                            let already_scrobbled = if let Some(last_track) = &last_scrobble {
                                 // if the last scrobbled track was over 50%, we already did now playing
                                 last_track.title == track.title
                                     && last_track.album == track.album
@@ -391,7 +426,7 @@ impl MediaCenter {
                                     .map(|scrobbler| scrobbler.scrobble(&track)),
                             )
                             .await;
-                        } else if last_track.is_none() {
+                        } else if last_scrobble.is_none() {
                             futures::future::join_all(
                                 scrobblers
                                     .iter()
@@ -399,7 +434,7 @@ impl MediaCenter {
                             )
                             .await;
                         }
-                        last_scrobble.lock().replace(track.clone());
+                        last_scrobble.replace(track.deref().clone());
                     }
                     _ => {}
                 };
@@ -408,12 +443,13 @@ impl MediaCenter {
     }
 
     fn sanitize_apple_music_album_name(album_name: &str) -> String {
-        let patterns = [" - Single", " - EP"];
-
-        let mut sanitized_name = album_name.to_string();
-        for pattern in patterns {
-            sanitized_name = sanitized_name.replace(pattern, "");
-        }
+        let mut sanitized_name = album_name;
+        sanitized_name = sanitized_name
+            .strip_suffix(" - Single")
+            .unwrap_or(sanitized_name);
+        sanitized_name = sanitized_name
+            .strip_suffix(" - EP")
+            .unwrap_or(sanitized_name);
         sanitized_name.trim().to_string()
     }
 }
