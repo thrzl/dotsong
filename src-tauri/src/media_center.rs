@@ -343,6 +343,9 @@ impl MediaCenter {
         let scrobblers = self.scrobblers.clone();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
+        if let Some(task_handle) = task_guard.take() {
+            task_handle.abort();
+        };
         println!(
             "spawning scrobbling task with {} scrobblers",
             scrobblers.lock().len()
