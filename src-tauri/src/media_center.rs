@@ -63,7 +63,7 @@ impl MediaCenter {
     fn media_info_equal(previous: Option<&MediaInfo>, current: &MediaInfo) -> bool {
         // make sure it's even real
         let Some(previous) = previous else {
-            return true;
+            return false;
         };
 
         // check metadata
@@ -71,10 +71,10 @@ impl MediaCenter {
             || previous.artist != current.artist
             || previous.is_playing != current.is_playing
         {
-            return true;
+            return false;
         }
 
-        false
+        true
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -335,21 +335,27 @@ impl MediaCenter {
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
-                let enriched_track = deezer_client
-                    .enrich_media_info(&media_info_clone, false)
-                    .await
-                    .unwrap_or(media_info);
+                let enriched_track = if Self::media_info_equal(last_track.as_deref(), &media_info) {
+                    last_track.as_ref().unwrap()
+                } else {
+                    &Arc::new(
+                        deezer_client
+                            .enrich_media_info(&media_info_clone, false)
+                            .await
+                            .unwrap_or(media_info),
+                    )
+                };
 
-                if !Self::media_info_equal(last_track.as_deref(), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+                if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(
                         enriched_track.clone(),
-                    )))
+                    ))
                     .unwrap();
                 } else {
-                    tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
+                    tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
                         .unwrap();
                 };
-                inner_self.last_track.store(Some(Arc::new(enriched_track)));
+                inner_self.last_track.store(Some(enriched_track.clone()));
                 play_state_notify.notify_one();
             });
         });
