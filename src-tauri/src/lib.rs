@@ -5,6 +5,8 @@ mod models;
 
 use discord_presence::DiscordError;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use media_center::{MediaCenter, TrackUpdateEvent};
@@ -25,8 +27,7 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn load_config(state: tauri::State<'_, AppState>) -> config::Config {
-    let config = state.config.lock();
-    config.clone()
+    state.config.read().clone()
 }
 
 #[tauri::command]
@@ -133,7 +134,7 @@ async fn save_config(
     config: config::Config,
 ) -> Result<(), String> {
     {
-        let mut config_lock = state.config.lock();
+        let mut config_lock = state.config.write();
 
         // set internal config state
         *config_lock = config.clone();
@@ -160,8 +161,8 @@ async fn save_config(
 struct AppState {
     media_center: Arc<MediaCenter>,
     tray: Arc<Mutex<TrayIcon>>,
-    quitting: Arc<Mutex<bool>>,
-    config: Arc<Mutex<config::Config>>,
+    quitting: AtomicBool,
+    config: Arc<RwLock<config::Config>>,
     config_path: std::path::PathBuf,
     presence_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     rpc: Arc<Mutex<Option<discord_presence::Client>>>,
@@ -338,9 +339,8 @@ pub fn run() {
                 .icon(icon)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        let quitting = app.state::<Arc<AppState>>().quitting.clone();
-                        let mut quitting_inner = quitting.lock();
-                        *quitting_inner = true;
+                        let quitting = &app.state::<Arc<AppState>>().quitting;
+                        quitting.store(true, std::sync::atomic::Ordering::SeqCst);
                         app.exit(0);
                     }
                     "settings" => {
@@ -398,8 +398,8 @@ pub fn run() {
             let app_state = AppState {
                 media_center: Arc::new(MediaCenter::new(config.scrobblers.clone())),
                 tray: Arc::new(Mutex::new(tray)),
-                quitting: Arc::new(Mutex::new(false)),
-                config: Arc::new(Mutex::new(config)),
+                quitting: AtomicBool::new(false),
+                config: Arc::new(RwLock::new(config)),
                 config_path: app_config_dir.join("dotsong_config.json"),
                 presence_task: Arc::new(Mutex::new(None)),
                 rpc: Arc::new(Mutex::new(None)),
@@ -407,7 +407,7 @@ pub fn run() {
             };
 
             app_state.media_center.clone().start_media_poller();
-            if app_state.config.lock().discord_rpc_enabled {
+            if app_state.config.read().discord_rpc_enabled {
                 *app_state.presence_task.lock() = Some(app_state.start_discord_presence());
             }
             app_state.media_center.clone().start_scrobbling_task();
@@ -435,7 +435,7 @@ pub fn run() {
     program.run(|_app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let s: State<AppState> = _app.state();
-            if s.quitting.lock().clone() {
+            if s.quitting.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
             api.prevent_exit();
