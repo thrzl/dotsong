@@ -195,8 +195,8 @@ impl AppState {
                     TrackUpdateEvent::NewTrack(track) => track,
                     _ => continue,
                 };
-                let now_playing_title = track.title.clone().unwrap_or_else(|| "-".to_string());
-                let now_playing_artist = track.artist.clone().unwrap_or_else(|| "-".to_string());
+                let now_playing_title = track.title();
+                let now_playing_artist = track.artist();
                 let nothing_playing = now_playing_title == "-" && now_playing_artist == "-";
                 let now_playing_text = if nothing_playing {
                     "nothing playing".to_string()

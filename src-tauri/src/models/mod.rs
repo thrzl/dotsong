@@ -13,6 +13,18 @@ pub struct MediaInfo {
     pub isrc: Option<String>,
 }
 
+impl MediaInfo {
+    pub fn title(&self) -> &str {
+        self.title.as_deref().unwrap_or_default()
+    }
+    pub fn artist(&self) -> &str {
+        self.artist.as_deref().unwrap_or_default()
+    }
+    pub fn album(&self) -> &str {
+        self.album.as_deref().unwrap_or_default()
+    }
+}
+
 impl Default for MediaInfo {
     fn default() -> Self {
         MediaInfo {

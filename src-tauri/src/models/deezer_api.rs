@@ -53,16 +53,11 @@ impl DeezerClient {
         apple_music: bool,
     ) -> Option<DeezerTrack> {
         let clean_title = CLEAN_TITLE_RE
-            .replace_all(track.title.clone().unwrap_or_default().as_str(), "")
+            .replace_all(track.title(), "")
             .trim()
             .to_string();
         let query = utf8_percent_encode(
-            &format!(
-                "{} {} {}",
-                clean_title,
-                track.album.clone().unwrap_or_default(),
-                track.artist.clone().unwrap_or_default()
-            ),
+            &format!("{} {} {}", clean_title, track.album(), track.artist()),
             NON_ALPHANUMERIC,
         )
         .to_string();
@@ -82,11 +77,13 @@ impl DeezerClient {
         let track_info = if apple_music {
             found_tracks.iter().find(|t| {
                 // if it's apple music, the album title is in the artist field, so we need to check if the track artist contains the album title instead
-                track.artist.clone().is_some_and(|artist| {
-                    artist
-                        .to_lowercase()
-                        .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
-                })
+                let artist = track.artist();
+                if artist.is_empty() {
+                    return false;
+                }
+                artist
+                    .to_lowercase()
+                    .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
             })
         } else {
             found_tracks.iter().find(|t| {

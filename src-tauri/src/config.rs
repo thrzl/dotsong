@@ -29,8 +29,8 @@ impl Scrobbler {
         println!(
             "scrobbling to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
+            track.artist(),
+            track.title()
         );
         let scrobble =
             listenbrainz::Scrobble::from_media_info(track, listenbrainz::ListenType::Single);
@@ -60,19 +60,15 @@ impl Scrobbler {
             ),
         };
         let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
-        let scrobble = Scrobble::new(
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default(),
-            timestamp,
-        )
-        .with_album(track.album.clone().unwrap_or_default())
-        .with_duration(track.duration.unwrap_or_default().into());
+        let scrobble = Scrobble::new(track.artist(), track.title(), timestamp)
+            .with_album(track.album())
+            .with_duration(track.duration.unwrap_or_default().into());
         // implement LastFM scrobbling logic here
         println!(
             "scrobbling to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
+            track.artist(),
+            track.title()
         );
         match client.scrobble(&[scrobble]).await {
             Ok(_) => (),
@@ -85,8 +81,8 @@ impl Scrobbler {
         println!(
             "sending now playing to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
+            track.artist(),
+            track.title()
         );
         let scrobble =
             listenbrainz::Scrobble::from_media_info(track, listenbrainz::ListenType::PlayingNow); // quiet warnings about unused variable
@@ -124,8 +120,8 @@ impl Scrobbler {
         println!(
             "sending now playing to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
+            track.artist(),
+            track.title()
         );
         let (api_key, api_secret) = match host {
             LastFMHost::LastFM => (lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET),
@@ -135,12 +131,9 @@ impl Scrobbler {
             ),
         };
         let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
-        let now_playing = NowPlaying::new(
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default(),
-        )
-        .with_album(track.album.clone().unwrap_or_default())
-        .with_duration(track.duration.unwrap_or_default().into());
+        let now_playing = NowPlaying::new(track.artist(), track.title())
+            .with_album(track.album())
+            .with_duration(track.duration.unwrap_or_default().into());
         match client.update_now_playing(&now_playing).await {
             Ok(_) => (),
             Err(e) => eprintln!("Failed to send now playing to LastFM: {}", e),
