@@ -114,17 +114,15 @@ impl MediaCenter {
                         player_name.to_lowercase().contains("applemusic"),
                     )
                     .await;
-                if !Self::should_broadcast_track(
-                    self.last_track.load_full().as_ref().as_ref(),
-                    &enriched,
-                ) {
+                if !Self::should_broadcast_track(self.last_track.load_full().as_deref(), &enriched)
+                {
                     self.track_tx
                         .send(TrackUpdateEvent::PlaybackStateChange(enriched))
                         .unwrap();
                     continue;
                 }
                 self.elapsed_offset.store(0, Ordering::Relaxed);
-                self.last_track.store(Arc::new(Some(enriched.clone())));
+                self.last_track.store(Some(Arc::new(enriched.clone())));
                 self.play_state_notify.notify_one();
                 self.track_tx
                     .send(TrackUpdateEvent::NewTrack(enriched))
