@@ -1,5 +1,6 @@
 use crate::lastfm_auth;
 use crate::models::{listenbrainz, MediaInfo};
+use last_fm_rs::{Client, NowPlaying, Scrobble};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -15,6 +16,11 @@ pub struct Scrobbler {
     endpoint_url: String,
     api_key: String,
     format: ScrobblerFormat,
+}
+
+pub enum LastFMHost {
+    LastFM,
+    LibreFM,
 }
 
 impl Scrobbler {
@@ -41,14 +47,19 @@ impl Scrobbler {
             .ok();
     }
 
-    async fn scrobble_lastfm(&self, track: &MediaInfo) {
-        use last_fm_rs::{Client, Scrobble};
+    async fn scrobble_lastfm(&self, track: &MediaInfo, host: LastFMHost) {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let client = Client::new(lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET)
-            .with_session_key(&self.api_key);
+        let (api_key, api_secret) = match host {
+            LastFMHost::LastFM => (lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET),
+            LastFMHost::LibreFM => (
+                lastfm_auth::LIBREFM_API_KEY,
+                lastfm_auth::LIBREFM_API_SECRET,
+            ),
+        };
+        let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
         let scrobble = Scrobble::new(
             track.artist.clone().unwrap_or_default(),
             track.title.clone().unwrap_or_default(),
@@ -109,16 +120,21 @@ impl Scrobbler {
         }
     }
 
-    async fn now_playing_lastfm(&self, track: &MediaInfo) {
-        use last_fm_rs::{Client, NowPlaying};
+    async fn now_playing_lastfm(&self, track: &MediaInfo, host: LastFMHost) {
         println!(
             "sending now playing to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
             track.artist.clone().unwrap_or_default(),
             track.title.clone().unwrap_or_default()
         );
-        let client = Client::new(lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET)
-            .with_session_key(&self.api_key);
+        let (api_key, api_secret) = match host {
+            LastFMHost::LastFM => (lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET),
+            LastFMHost::LibreFM => (
+                lastfm_auth::LIBREFM_API_KEY,
+                lastfm_auth::LIBREFM_API_SECRET,
+            ),
+        };
+        let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
         let now_playing = NowPlaying::new(
             track.artist.clone().unwrap_or_default(),
             track.title.clone().unwrap_or_default(),
@@ -131,85 +147,16 @@ impl Scrobbler {
         };
     }
 
-    async fn scrobble_librefm(&self, track: &MediaInfo) {
-        use last_fm_rs::{Client, Scrobble};
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let client = match Client::new(
-            lastfm_auth::LIBREFM_API_KEY,
-            lastfm_auth::LIBREFM_API_SECRET,
-        )
-        .with_api_base(&self.endpoint_url)
-        {
-            Ok(c) => c.with_session_key(&self.api_key),
-            Err(e) => {
-                eprintln!("invalid libre.fm endpoint url: {}", e);
-                return;
-            }
-        };
-        let scrobble = Scrobble::new(
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default(),
-            timestamp,
-        )
-        .with_album(track.album.clone().unwrap_or_default())
-        .with_duration(track.duration.unwrap_or_default().into());
-        println!(
-            "scrobbling to {}: {} - {}",
-            self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
-        );
-        match client.scrobble(&[scrobble]).await {
-            Ok(_) => (),
-            Err(e) => eprintln!("failed to send scrobble to LibreFM: {}", e),
-        };
-    }
-
-    async fn now_playing_librefm(&self, track: &MediaInfo) {
-        use last_fm_rs::{Client, NowPlaying};
-        println!(
-            "sending now playing to {}: {} - {}",
-            self.endpoint_url.trim_end_matches("/"),
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default()
-        );
-        let client = match Client::new(
-            lastfm_auth::LIBREFM_API_KEY,
-            lastfm_auth::LIBREFM_API_SECRET,
-        )
-        .with_api_base(&self.endpoint_url)
-        {
-            Ok(c) => c.with_session_key(&self.api_key),
-            Err(e) => {
-                eprintln!("invalid libre.fm endpoint url: {}", e);
-                return;
-            }
-        };
-        let now_playing = NowPlaying::new(
-            track.artist.clone().unwrap_or_default(),
-            track.title.clone().unwrap_or_default(),
-        )
-        .with_album(track.album.clone().unwrap_or_default())
-        .with_duration(track.duration.unwrap_or_default().into());
-        match client.update_now_playing(&now_playing).await {
-            Ok(_) => (),
-            Err(e) => eprintln!("Failed to send now playing to LibreFM: {}", e),
-        };
-    }
-
     pub async fn scrobble(&self, track: &MediaInfo) {
         match self.format {
             ScrobblerFormat::ListenBrainz => {
                 self.scrobble_listenbrainz(track).await;
             }
             ScrobblerFormat::LastFM => {
-                self.scrobble_lastfm(track).await;
+                self.scrobble_lastfm(track, LastFMHost::LastFM).await;
             }
             ScrobblerFormat::LibreFM => {
-                self.scrobble_librefm(track).await;
+                self.scrobble_lastfm(track, LastFMHost::LibreFM).await;
             }
         }
     }
@@ -217,8 +164,8 @@ impl Scrobbler {
     pub async fn now_playing(&self, track: &MediaInfo) {
         match self.format {
             ScrobblerFormat::ListenBrainz => self.now_playing_listenbrainz(track).await,
-            ScrobblerFormat::LastFM => self.now_playing_lastfm(track).await,
-            ScrobblerFormat::LibreFM => self.now_playing_librefm(track).await,
+            ScrobblerFormat::LastFM => self.now_playing_lastfm(track, LastFMHost::LastFM).await,
+            ScrobblerFormat::LibreFM => self.now_playing_lastfm(track, LastFMHost::LibreFM).await,
         }
     }
 }
