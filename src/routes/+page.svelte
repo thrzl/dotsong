@@ -548,8 +548,10 @@
 
 	<Separator />
 
-	<footer class="flex items-center justify-between gap-2">
-		<span class="text-muted-foreground min-w-16 text-xs tabular-nums">
+	<footer class="flex items-center justify-end gap-2">
+		<span
+			class="text-muted-foreground min-w-16 text-xs tabular-nums text-right pr-2"
+		>
 			{#if saveStatus === "saving"}
 				saving…
 			{:else if saveStatus === "saved"}
