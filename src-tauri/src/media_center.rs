@@ -252,19 +252,23 @@ impl MediaCenter {
 
     fn start_position_ticker(self: &Arc<Self>) {
         let tx = self.track_tx.clone();
-        let last_track = self.last_track.load();
         let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
         let tick = Duration::from_secs(5);
+        let inner_self = self.clone();
 
         tauri::async_runtime::spawn(async move {
             let mut is_playing = false;
             loop {
                 if !is_playing {
                     play_state.notified().await;
+
+                    // i dont wanna just hold this indefinitely
+                    let last_track = inner_self.last_track.load_full();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
+                let last_track = inner_self.last_track.load_full();
                 tokio::select! {
                     _ = tokio::time::sleep(tick) => {
                         let snapshot = last_track.clone();
@@ -311,7 +315,6 @@ impl MediaCenter {
         let now_playing = media_remote::NowPlayingPerl::new();
         let deezer_client = self.deezer_client.clone();
         let play_state_notify = self.play_state_notify.clone();
-        let last_track = self.last_track.load_full();
         let inner_self = self.clone();
 
         now_playing.subscribe(move |event| {
@@ -319,8 +322,8 @@ impl MediaCenter {
             let tx = tx.clone();
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
-            let last_track = last_track.clone();
             let inner_self = inner_self.clone();
+            let last_track = inner_self.last_track.load_full();
             tauri::async_runtime::spawn(async move {
                 let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
