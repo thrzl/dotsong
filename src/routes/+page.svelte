@@ -558,18 +558,6 @@
 				save failed
 			{/if}
 		</span>
-		<div class="flex items-center gap-2">
-			<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
-				reset
-			</Button>
-			<Button
-				variant="secondary"
-				class="rounded-md text-xs"
-				onclick={close}
-			>
-				cancel
-			</Button>
-		</div>
 	</footer>
 </main>
 
