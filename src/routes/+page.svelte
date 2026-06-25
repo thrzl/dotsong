@@ -548,8 +548,10 @@
 
 	<Separator />
 
-	<footer class="flex items-center justify-between gap-2">
-		<span class="text-muted-foreground min-w-16 text-xs tabular-nums">
+	<footer class="flex items-center justify-end gap-2">
+		<span
+			class="text-muted-foreground min-w-16 text-xs tabular-nums text-right pr-2"
+		>
 			{#if saveStatus === "saving"}
 				saving…
 			{:else if saveStatus === "saved"}
@@ -558,18 +560,6 @@
 				save failed
 			{/if}
 		</span>
-		<div class="flex items-center gap-2">
-			<Button variant="ghost" class="rounded-md text-xs" onclick={reset}>
-				reset
-			</Button>
-			<Button
-				variant="secondary"
-				class="rounded-md text-xs"
-				onclick={close}
-			>
-				cancel
-			</Button>
-		</div>
 	</footer>
 </main>
 
