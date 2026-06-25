@@ -36,6 +36,9 @@ jobs:
           - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
             arch: x86_64
             args: "--bundles appimage"
+          - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
+            arch: aarch64
+            args: "--bundles appimage"
           - platform: "windows-latest"
             arch: x86_64
             args: ""
