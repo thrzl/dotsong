@@ -494,8 +494,6 @@
 		{/if}
 	</section>
 
-	<Separator />
-
 	<section class="flex flex-col gap-3">
 		<h2 class="text-foreground text-sm font-semibold">updates</h2>
 		<Field.Field orientation="horizontal">
@@ -513,7 +511,9 @@
 				onclick={checkForUpdate}
 				disabled={updateStatus === "checking"}
 			>
-				{updateStatus === "checking" ? "checking…" : "check for updates"}
+				{updateStatus === "checking"
+					? "checking…"
+					: "check for updates"}
 			</Button>
 		</Field.Field>
 		{#if updateStatus === "done" && updateInfo}
