@@ -177,7 +177,7 @@ impl DeezerClient {
             cover_artwork: Some(CoverArtwork::from_url(
                 enriched_track
                     .cover_artwork
-                    .unwrap_or("default".to_string()),
+                    .unwrap_or_else(|| "default".to_string()),
             )),
             is_playing: media_info.is_playing,
             duration: if media_info.duration.is_some_and(|d| d == 0) {

@@ -258,7 +258,7 @@ impl AppState {
                                     media_info
                                         .cover_artwork
                                         .clone()
-                                        .unwrap_or(CoverArtwork::default())
+                                        .unwrap_or_else(|| CoverArtwork::default())
                                         .url()
                                         .unwrap_or("default"),
                                 );
