@@ -21,6 +21,8 @@ pub enum TrackUpdateEvent {
     NewTrack(Arc<MediaInfo>),
     PlaybackStateChange(Arc<MediaInfo>),
     PositionChanged(Arc<MediaInfo>),
+    /// every 5 seconds, even if the track hasn't changed, to update the elapsed time
+    Tick(Arc<MediaInfo>),
 }
 
 pub struct MediaCenter {
@@ -271,10 +273,9 @@ impl MediaCenter {
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
-                let last_track = inner_self.last_track.load_full();
                 tokio::select! {
                     _ = tokio::time::sleep(tick) => {
-                        let snapshot = last_track.clone();
+                        let snapshot = inner_self.last_track.load_full();
                         let Some(base) = snapshot.as_ref() else {
                             is_playing = false;
                             continue;
@@ -296,14 +297,14 @@ impl MediaCenter {
                             continue;
                         };
                         track.elapsed_time = Some(effective);
-                        let _ = tx.send(TrackUpdateEvent::PositionChanged(Arc::new(track)));
+                        let _ = tx.send(TrackUpdateEvent::Tick(Arc::new(track)));
                     }
                     _ = play_state.notified() => {
                         // A media event arrived. Whatever it said is the new
                         // ground truth; reset our offset so the next tick
                         // adds on top of the OS-reported position.
                         elapsed_offset.store(0, Ordering::Relaxed);
-                        is_playing = last_track.as_ref()
+                        is_playing = inner_self.last_track.load_full()
                             .is_some_and(|t| t.is_playing);
                     }
                 }
@@ -350,7 +351,11 @@ impl MediaCenter {
                 let media_info_clone = media_info.clone();
                 let mut enriched_track =
                     if Self::media_info_equal(last_track.as_deref(), &media_info) {
-                        last_track.as_ref().unwrap().deref().clone()
+                        let mut cached = last_track.as_deref().unwrap().clone();
+                        cached.elapsed_time = media_info.elapsed_time;
+                        cached.duration = media_info.duration;
+                        cached.is_playing = media_info.is_playing;
+                        cached
                     } else {
                         deezer_client
                             .enrich_media_info(&media_info_clone, false)
@@ -396,10 +401,18 @@ impl MediaCenter {
                 };
 
                 if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
-                        enriched_track.clone(),
-                    )))
-                    .unwrap();
+                    if last_track.as_ref().map(|v| v.is_playing) != Some(enriched_track.is_playing)
+                    {
+                        tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+                            enriched_track.clone(),
+                        )))
+                        .unwrap();
+                    } else {
+                        tx.send(TrackUpdateEvent::PositionChanged(Arc::new(
+                            enriched_track.clone(),
+                        )))
+                        .unwrap();
+                    }
                 } else {
                     tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
                         .unwrap();
@@ -446,7 +459,7 @@ impl MediaCenter {
                         )
                         .await;
                     }
-                    TrackUpdateEvent::PositionChanged(track) => {
+                    TrackUpdateEvent::PositionChanged(track) | TrackUpdateEvent::Tick(track) => {
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }
