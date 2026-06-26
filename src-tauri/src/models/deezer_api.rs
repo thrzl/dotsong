@@ -89,8 +89,13 @@ impl DeezerClient {
             let mut tracks = found_tracks.iter().filter(|t| {
                 let title_matches = t["title"].as_str().map(|s| s.to_lowercase())
                     == clean_title.to_lowercase().into();
-                let artist_matches = t["artist"]["name"].as_str().map(|s| s.to_lowercase())
-                    == track.artist().to_lowercase().into();
+                let deezer_artist = t["artist"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase();
+                let track_artist = track.artist().to_lowercase();
+                let artist_matches =
+                    deezer_artist.contains(&track_artist) || track_artist.contains(&deezer_artist);
                 title_matches && artist_matches
             });
             tracks
