@@ -225,7 +225,6 @@ impl AppState {
 
                 rpc.start();
             }
-
             loop {
                 rx.changed().await.unwrap();
                 let track_event = rx.borrow_and_update().clone();
@@ -236,6 +235,7 @@ impl AppState {
                 let media_info = match track_event {
                     TrackUpdateEvent::NewTrack(info) => info,
                     TrackUpdateEvent::PlaybackStateChange(info) => info,
+                    TrackUpdateEvent::PositionChanged(info) => info,
                     _ => continue,
                 };
                 if !media_info.is_playing {
