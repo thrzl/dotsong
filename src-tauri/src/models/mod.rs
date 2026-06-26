@@ -9,6 +9,7 @@ static LITTERBOX_CACHE: LazyLock<Cache<u64, String>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(100)
         .eviction_policy(moka::policy::EvictionPolicy::tiny_lfu())
+        .time_to_live(std::time::Duration::from_hours(1))
         .build()
 });
 
@@ -91,7 +92,7 @@ impl CoverArtwork {
         let form = reqwest::multipart::Form::new()
             .text("reqtype", "fileupload")
             .text("fileNameLength", "16")
-            .text("time", "12h")
+            .text("time", "1h")
             .part(
                 "fileToUpload",
                 reqwest::multipart::Part::bytes(bytes.to_vec())
