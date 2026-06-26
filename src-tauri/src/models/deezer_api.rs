@@ -86,13 +86,19 @@ impl DeezerClient {
                     .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
             })
         } else {
-            found_tracks.iter().find(|t| {
+            let mut tracks = found_tracks.iter().filter(|t| {
                 let title_matches = t["title"].as_str().map(|s| s.to_lowercase())
                     == clean_title.to_lowercase().into();
                 let artist_matches = t["artist"]["name"].as_str().map(|s| s.to_lowercase())
                     == track.artist().to_lowercase().into();
                 title_matches && artist_matches
-            })
+            });
+            tracks
+                .find(|t| {
+                    t["album"]["title"].as_str().map(|s| s.to_lowercase())
+                        == track.album().to_lowercase().into()
+                })
+                .or(tracks.into_iter().next())
         };
         let track = Some(DeezerTrack {
             id: track_info?["id"].as_u64()?,
