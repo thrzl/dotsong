@@ -87,39 +87,36 @@ impl DeezerClient {
                     .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
             })
         } else {
-            found_tracks.iter().find(|t| {
-                t["album"]["title"].as_str().map(|s| s.to_lowercase())
-                    == track.album().to_lowercase().into()
-            })
-        }?;
-        let title_matches = track_info["title"].as_str().map(|s| s.to_lowercase())
-            == clean_title.to_lowercase().into();
+            let mut tracks = found_tracks.iter().filter(|t| {
+                let title_matches = t["title"].as_str().map(|s| s.to_lowercase())
+                    == clean_title.to_lowercase().into();
+                let artist_matches = t["artist"]["name"].as_str().map(|s| s.to_lowercase())
+                    == track.artist().to_lowercase().into();
+                title_matches && artist_matches
+            });
+            tracks
+                .find(|t| {
+                    t["album"]["title"].as_str().map(|s| s.to_lowercase())
+                        == track.album().to_lowercase().into()
+                })
+                .or(tracks.into_iter().next())
+        };
         let track = Some(DeezerTrack {
-            id: if title_matches {
-                track_info["id"].as_u64()?
-            } else {
-                0
-            },
-            title: if title_matches {
-                track_info["title"].as_str()?.to_string()
-            } else {
-                track.title.clone()?
-            },
-            isrc: if title_matches {
-                track_info["isrc"].as_str().map(|s| s.to_string())
-            } else {
-                None
-            },
+            id: track_info?["id"].as_u64()?,
+            title: track_info?["title"].as_str()?.to_string(),
+            isrc: track_info?["isrc"].as_str().map(|s| s.to_string()),
             album: DeezerAlbum {
-                id: track_info["album"]["id"].as_u64()?,
-                title: track_info["album"]["title"].as_str()?.to_string(),
-                cover_artwork: track_info["album"]["cover_big"]
+                id: track_info?["album"]["id"].as_u64()?,
+                title: track_info?["album"]["title"].as_str()?.to_string(),
+                cover_artwork: track_info?["album"]["cover_big"]
                     .as_str()
                     .map(|s| s.to_string()),
             },
-            artist: track_info["artist"]["name"].as_str()?.to_string(),
-            cover_artwork: track_info["album"]["cover"].as_str().map(|s| s.to_string()),
-            duration: track_info["duration"].as_u64().unwrap_or(0),
+            artist: track_info?["artist"]["name"].as_str()?.to_string(),
+            cover_artwork: track_info?["album"]["cover"]
+                .as_str()
+                .map(|s| s.to_string()),
+            duration: track_info?["duration"].as_u64().unwrap_or(0),
         });
         self.cache.insert(query, track.clone().unwrap()).await;
         track
