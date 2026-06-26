@@ -340,18 +340,7 @@ impl MediaCenter {
                         .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
-                    cover_artwork: if let Some(cover_artwork) = media.album_cover {
-                        if !inner_self.config.read().upload_cover_artwork {
-                            None
-                        } else {
-                            let bytes = Bytes::copy_from_slice(cover_artwork.as_bytes());
-                            let mut cover = CoverArtwork::from_bytes(bytes);
-                            cover.upload_bytes().await.ok();
-                            Some(cover)
-                        }
-                    } else {
-                        None
-                    },
+                    cover_artwork: None,
                     is_playing: media.is_playing.unwrap_or(false),
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
@@ -359,27 +348,65 @@ impl MediaCenter {
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
-                let enriched_track = if Self::media_info_equal(last_track.as_deref(), &media_info) {
-                    last_track.as_ref().unwrap()
-                } else {
-                    &Arc::new(
+                let mut enriched_track =
+                    if Self::media_info_equal(last_track.as_deref(), &media_info) {
+                        last_track.as_ref().unwrap().deref().clone()
+                    } else {
                         deezer_client
                             .enrich_media_info(&media_info_clone, false)
                             .await
-                            .unwrap_or(media_info),
-                    )
+                            .unwrap_or(media_info)
+                    };
+
+                if enriched_track.cover_artwork.is_none()
+                    || enriched_track
+                        .cover_artwork
+                        .clone()
+                        .unwrap()
+                        .url()
+                        .is_none()
+                {
+                    enriched_track.cover_artwork = if let Some(url) = enriched_track
+                        .cover_artwork
+                        .map(|c| c.url().map(|s| s.to_string()))
+                        .flatten()
+                    {
+                        // if deezer got an image, that's fine
+                        Some(CoverArtwork::from_url(url.to_string()))
+                    } else if let Some(cover_artwork) = media.album_cover {
+                        // otherwise, we should upload the bytes
+                        if !inner_self.config.read().upload_cover_artwork {
+                            None
+                        } else {
+                            let mut cover = CoverArtwork::from_dynamic_image(&cover_artwork);
+                            match cover.upload_bytes().await {
+                                Ok(url) => {
+                                    println!("uploaded cover artwork: {}", url);
+                                    Some(cover)
+                                }
+                                Err(e) => {
+                                    println!("upload failed: {:?}", e);
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    }
                 };
 
                 if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
-                    tx.send(TrackUpdateEvent::PlaybackStateChange(
+                    tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
                         enriched_track.clone(),
-                    ))
+                    )))
                     .unwrap();
                 } else {
-                    tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                    tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
                         .unwrap();
                 };
-                inner_self.last_track.store(Some(enriched_track.clone()));
+                inner_self
+                    .last_track
+                    .store(Some(Arc::new(enriched_track.clone())));
                 play_state_notify.notify_one();
             });
         });

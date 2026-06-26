@@ -1,5 +1,16 @@
 use crate::http;
 use bytes::Bytes;
+use image::DynamicImage;
+use moka::future::Cache;
+use std::sync::LazyLock;
+use xxhash::xxh3_64;
+
+static LITTERBOX_CACHE: LazyLock<Cache<u64, String>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(100)
+        .eviction_policy(moka::policy::EvictionPolicy::tiny_lfu())
+        .build()
+});
 
 pub mod deezer_api;
 pub mod listenbrainz;
@@ -51,7 +62,13 @@ impl CoverArtwork {
         }
     }
 
-    pub fn from_bytes(bytes: Bytes) -> Self {
+    pub fn from_dynamic_image(image: &DynamicImage) -> Self {
+        let rgb8 = image.to_rgb8();
+        let mut buf = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut buf)
+            .encode_image(&rgb8)
+            .unwrap();
+        let bytes = Bytes::from(buf);
         CoverArtwork {
             data: Some(bytes),
             url: None,
@@ -65,6 +82,12 @@ impl CoverArtwork {
 
     pub async fn upload_bytes(&mut self) -> Result<String, reqwest::Error> {
         let bytes = self.data.clone().unwrap_or_else(|| Bytes::new());
+        let hash = xxh3_64(&bytes);
+        if let Some(cached_url) = LITTERBOX_CACHE.get(&hash).await {
+            println!("already uploaded image {:016x}, cache hit", hash);
+            self.url = Some(cached_url.clone());
+            return Ok(cached_url);
+        }
         let form = reqwest::multipart::Form::new()
             .text("reqtype", "fileupload")
             .text("fileNameLength", "16")
@@ -85,6 +108,7 @@ impl CoverArtwork {
 
         let url = res.text().await?;
         self.url = Some(url.clone());
+        LITTERBOX_CACHE.insert(hash, url.clone()).await;
         Ok(url)
     }
 }

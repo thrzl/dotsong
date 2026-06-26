@@ -1097,6 +1097,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "tray-icon",
+ "xxhash",
 ]
 
 [[package]]
@@ -6392,6 +6393,11 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash"
+version = "0.1.0"
+source = "git+https://github.com/rust-stdx/stdx#3b352d0e3f98793936f1880162ee7652971feba2"
 
 [[package]]
 name = "y4m"
