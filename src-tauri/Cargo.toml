@@ -30,7 +30,7 @@ tauri-plugin-autostart = "2.5.1"
 tray-icon = "0.24.1"
 discord-presence = "3.2.0"
 tokio = { version = "1", features = ["sync", "time"] }
-reqwest = { version = "0.13.4", features = ["json"] }
+reqwest = { version = "0.13.4", features = ["json", "multipart"] }
 chrono = "0.4.45"
 percent-encoding = "2.3.2"
 async-trait = "0.1.86"
@@ -41,9 +41,10 @@ futures = "0.3.32"
 last-fm-rs = { git = "https://github.com/thrzl/last-fm-rs", version = "20260120.0.0" }
 semver = { version = "1.0.28", features = ["serde"] }
 arc-swap = "1.9.1"
+bytes = "1.12.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-media-remote = { version = "0.4.1", default-features = false }
+media-remote = { git = "https://github.com/nohackjustnoobb/media-remote", version = "0.5.2" }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 nowhear = "0.2.0"

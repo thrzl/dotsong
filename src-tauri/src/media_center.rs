@@ -1,9 +1,10 @@
 use crate::config::Scrobbler;
-use crate::models::{self, MediaInfo};
+use crate::models::{self, CoverArtwork, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -31,6 +32,7 @@ pub struct MediaCenter {
     #[cfg(target_os = "macos")]
     macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
     deezer_client: Arc<models::deezer_api::DeezerClient>,
+    config: Arc<RwLock<crate::config::Config>>,
 
     play_state_notify: Arc<Notify>,
 }
@@ -39,7 +41,7 @@ impl MediaCenter {
     pub fn set_scrobblers(&self, scrobblers: Vec<Scrobbler>) {
         self.scrobblers.store(Arc::new(scrobblers));
     }
-    pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
+    pub fn new(scrobblers: Vec<Scrobbler>, config: Arc<RwLock<crate::config::Config>>) -> Self {
         let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(Arc::new(
             MediaInfo::default(),
         )));
@@ -53,6 +55,7 @@ impl MediaCenter {
             macos_listener: Arc::new(Mutex::new(None)),
             deezer_client: Arc::new(models::deezer_api::DeezerClient::new(100)),
             play_state_notify: Arc::new(Notify::new()),
+            config,
         }
     }
 
@@ -337,7 +340,18 @@ impl MediaCenter {
                         .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
-                    cover_artwork: None,
+                    cover_artwork: if let Some(cover_artwork) = media.album_cover {
+                        if !inner_self.config.read().upload_cover_artwork {
+                            None
+                        } else {
+                            let bytes = Bytes::copy_from_slice(cover_artwork.as_bytes());
+                            let mut cover = CoverArtwork::from_bytes(bytes);
+                            cover.upload_bytes().await.ok();
+                            Some(cover)
+                        }
+                    } else {
+                        None
+                    },
                     is_playing: media.is_playing.unwrap_or(false),
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
