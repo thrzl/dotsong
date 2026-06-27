@@ -168,7 +168,7 @@ impl MediaCenter {
                         .album
                         .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: Some(artist.join(", ")),
-                    elapsed_time: None,
+                    elapsed_time: Some(0),
                     cover_artwork: track.art_url,
                     is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                     duration: track.duration.map(|t| t.as_secs() as u32),
@@ -205,7 +205,7 @@ impl MediaCenter {
                         title: None,
                         album: None,
                         artist: None,
-                        elapsed_time: None,
+                        elapsed_time: Some(position.as_secs() as u32),
                         cover_artwork: None,
                         is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                         duration: None,
@@ -363,7 +363,6 @@ impl MediaCenter {
                     };
 
                 if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
-
                     if last_track.as_ref().map(|v| v.is_playing) != Some(enriched_track.is_playing)
                     {
                         tx.send(TrackUpdateEvent::PlaybackStateChange(
