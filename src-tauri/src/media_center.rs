@@ -266,7 +266,7 @@ impl MediaCenter {
                     play_state.notified().await;
 
                     // i dont wanna just hold this indefinitely
-                    let last_track = inner_self.last_track.load_full();
+                    let last_track = inner_self.last_track.load();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
@@ -324,18 +324,17 @@ impl MediaCenter {
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
             let inner_self = inner_self.clone();
-            let last_track = inner_self.last_track.load_full();
             tauri::async_runtime::spawn(async move {
                 let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
                     return;
                 }
-
+                
                 let media_info = MediaInfo {
                     title: media.title,
                     album: media
-                        .album
-                        .map(|album| Self::sanitize_apple_music_album_name(&album)),
+                    .album
+                    .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
                     cover_artwork: None,
@@ -343,25 +342,43 @@ impl MediaCenter {
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
                 };
-
+                if !media_info.is_playing {
+                    if let Some(track) = inner_self.last_track.load().as_ref() {
+                        if track.title == media_info.title && track.artist == media_info.artist {
+                            // when a new track is selected, apple music pauses the current track 
+                            // and plays the chosen one at the same time. this causes races, and 
+                            // the pause event usually loses for some reason (should not be the case)
+                            // so we short circuit here. this guarantees a win, especially bc of the
+                            // deezer enrichment
+                            let mut paused = track.deref().clone();
+                            paused.is_playing = false;
+                            paused.elapsed_time = media_info.elapsed_time;
+                            let paused_arc = Arc::new(paused);
+                            inner_self.last_track.store(Some(paused_arc.clone()));
+                            tx.send(TrackUpdateEvent::PlaybackStateChange(paused_arc)).unwrap();
+                        }
+                    }
+                }
+                
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
+                let last_track = inner_self.last_track.load_full();
                 let enriched_track: Arc<MediaInfo> =
-                    if Self::media_info_equal(last_track.as_deref(), &media_info) {
-                        let mut cached = last_track.as_deref().unwrap().clone();
-                        cached.elapsed_time = media_info.elapsed_time;
-                        cached.duration = media_info.duration;
-                        cached.is_playing = media_info.is_playing;
-                        Arc::new(cached)
-                    } else {
-                        Arc::new(
-                            deezer_client
-                                .enrich_media_info(&media_info_clone, false)
-                                .await
-                                .unwrap_or(media_info),
-                        )
-                    };
-
+                if Self::media_info_equal(last_track.as_deref(), &media_info) {
+                    let mut cached = last_track.as_deref().unwrap().clone();
+                    cached.elapsed_time = media_info.elapsed_time;
+                    cached.duration = media_info.duration;
+                    cached.is_playing = media_info.is_playing;
+                    Arc::new(cached)
+                } else {
+                    Arc::new(
+                        deezer_client
+                        .enrich_media_info(&media_info_clone, false)
+                        .await
+                        .unwrap_or(media_info),
+                    )
+                };
+                
                 if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
                     if last_track.as_ref().map(|v| v.is_playing) != Some(enriched_track.is_playing)
                     {
