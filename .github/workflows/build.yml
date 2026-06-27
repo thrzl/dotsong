@@ -92,7 +92,6 @@ jobs:
           LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
           LIBREFM_API_KEY: ${{ secrets.LIBREFM_API_KEY }}
           LIBREFM_API_SECRET: ${{ secrets.LIBREFM_API_SECRET }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
 
       - name: zip mac .app bundles
         if: matrix.platform == 'macos-latest' # This must match the platform value defined above.
