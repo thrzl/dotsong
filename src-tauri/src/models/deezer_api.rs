@@ -98,12 +98,15 @@ impl DeezerClient {
                     deezer_artist.contains(&track_artist) || track_artist.contains(&deezer_artist);
                 title_matches && artist_matches
             });
-            tracks
-                .find(|t| {
+            let final_track = if track.album.is_some() {
+                tracks.find(|t| {
                     t["album"]["title"].as_str().map(|s| s.to_lowercase())
                         == track.album().to_lowercase().into()
                 })
-                .or(tracks.into_iter().next())
+            } else {
+                tracks.into_iter().next()
+            };
+            final_track
         };
         let track = Some(DeezerTrack {
             id: track_info?["id"].as_u64()?,
