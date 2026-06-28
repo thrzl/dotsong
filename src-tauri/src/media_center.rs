@@ -86,8 +86,9 @@ impl MediaCenter {
     pub fn start_media_poller(self: Arc<Self>) {
         println!("starting media poller");
         let source_fut = nowhear::MediaSourceBuilder::new().build();
-        let s = self.clone();
+        let inner_self = self.clone();
         tauri::async_runtime::spawn(async move {
+            let inner_self = self.clone();
             let now_playing = match source_fut.await {
                 Ok(np) => np,
                 Err(e) => {
@@ -106,42 +107,73 @@ impl MediaCenter {
                 let Some(media_info) = Self::build_media_info(&now_playing, &event).await else {
                     continue;
                 };
+                println!("received media info: {:?}", media_info);
                 let player_name = match &event {
                     nowhear::MediaEvent::TrackChanged { player_name, .. }
                     | nowhear::MediaEvent::PositionChanged { player_name, .. }
                     | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
                     _ => continue,
                 };
-                let last_track = self.last_track.load_full();
+                let last_track = inner_self.last_track.load_full();
                 let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
-                let enriched = if same_track {
-                    last_track.as_ref().unwrap()
+                let mut enriched = if same_track {
+                    last_track.as_ref().unwrap().deref().clone()
                 } else {
-                    &Arc::new(
-                        self.deezer_client
-                            .enrich_media_info(
-                                &media_info,
-                                player_name.to_lowercase().contains("applemusic"),
-                            )
-                            .await
-                            .unwrap_or(media_info),
-                    )
+                    inner_self
+                        .deezer_client
+                        .enrich_media_info(
+                            &media_info,
+                            player_name.to_lowercase().contains("applemusic"),
+                        )
+                        .await
+                        .unwrap_or(media_info)
                 };
-                if Self::media_info_equal(self.last_track.load_full().as_deref(), &enriched) {
-                    self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(enriched.clone()))
+                if !enriched
+                    .cover_artwork
+                    .as_ref()
+                    .is_some_and(|c| c.url().is_some())
+                {
+                    enriched.cover_artwork = match enriched.cover_artwork.take() {
+                        Some(mut cover) if cover.bytes().is_some() => {
+                            if !inner_self.config.read().upload_cover_artwork {
+                                None
+                            } else {
+                                match cover.upload_bytes().await {
+                                    Ok(_) => {
+                                        println!("uploaded cover artwork");
+                                        Some(cover)
+                                    }
+                                    Err(e) => {
+                                        println!("upload failed: {:?}", e);
+                                        None
+                                    }
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                }
+                if Self::media_info_equal(inner_self.last_track.load_full().as_deref(), &enriched) {
+                    inner_self
+                        .track_tx
+                        .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+                            enriched.clone(),
+                        )))
                         .unwrap();
                     continue;
                 }
-                self.elapsed_offset.store(0, Ordering::Relaxed);
-                self.last_track.store(Some(enriched.clone()));
-                self.play_state_notify.notify_one();
-                self.track_tx
-                    .send(TrackUpdateEvent::NewTrack(enriched.clone()))
+                inner_self.elapsed_offset.store(0, Ordering::Relaxed);
+                inner_self
+                    .last_track
+                    .store(Some(Arc::new(enriched.clone())));
+                inner_self.play_state_notify.notify_one();
+                inner_self
+                    .track_tx
+                    .send(TrackUpdateEvent::NewTrack(Arc::new(enriched.clone())))
                     .unwrap();
             }
         });
-        s.clone().start_position_ticker();
+        inner_self.clone().start_position_ticker();
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -172,7 +204,10 @@ impl MediaCenter {
                         .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: Some(artist.join(", ")),
                     elapsed_time: None,
-                    cover_artwork: track.art_url,
+                    cover_artwork: track
+                        .artwork
+                        .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
+                        .flatten(), // this is some bull bro
                     is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                     duration: track.duration.map(|t| t.as_secs() as u32),
                     isrc: None,
@@ -198,7 +233,10 @@ impl MediaCenter {
                                 .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: Some(position.as_secs() as u32),
-                            cover_artwork: track.art_url,
+                            cover_artwork: track
+                                .artwork
+                                .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
+                                .flatten(),
                             is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                             duration: track.duration.map(|t| t.as_secs() as u32),
                             isrc: None,
@@ -233,7 +271,10 @@ impl MediaCenter {
                                 .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: player.position.map(|p| p.as_secs() as u32),
-                            cover_artwork: track.art_url,
+                            cover_artwork: track
+                                .artwork
+                                .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
+                                .flatten(),
                             is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                             duration: track.duration.map(|d| d.as_secs() as u32),
                             isrc: None,

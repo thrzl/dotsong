@@ -112,6 +112,37 @@ impl CoverArtwork {
         LITTERBOX_CACHE.insert(hash, url.clone()).await;
         Ok(url)
     }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn from_nowhear_artwork(artwork: nowhear::Artwork) -> Option<Self> {
+        match artwork {
+            nowhear::Artwork::Url { url } => {
+                if url.starts_with("file://") {
+                    let path = url.trim_start_matches("file://");
+                    if let Ok(image) = image::open(path) {
+                        return Some(CoverArtwork::from_dynamic_image(&image));
+                    } else {
+                        return None;
+                    }
+                } else {
+                    Some(CoverArtwork::from_url(url))
+                }
+            }
+            nowhear::Artwork::Bytes { mime, data } => {
+                if mime.is_some_and(|m| m != "image/jpeg") {
+                    // if it's not a jpeg, we need to convert it with image crate
+                    let img = image::load_from_memory(&*data)
+                        .expect("should be able to load image from bytes");
+                    Some(CoverArtwork::from_dynamic_image(&img))
+                } else {
+                    Some(CoverArtwork {
+                        data: Some(Bytes::from(data.to_vec())),
+                        url: None,
+                    })
+                }
+            }
+        }
+    }
 }
 
 impl Default for CoverArtwork {
