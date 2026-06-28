@@ -203,11 +203,8 @@ impl MediaCenter {
                         .album
                         .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: Some(artist.join(", ")),
-                    elapsed_time: None,
-                    cover_artwork: track
-                        .artwork
-                        .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
-                        .flatten(), // this is some bull bro
+                    elapsed_time: Some(0),
+                    cover_artwork: track.art_url,
                     is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                     duration: track.duration.map(|t| t.as_secs() as u32),
                     isrc: None,
@@ -246,7 +243,7 @@ impl MediaCenter {
                         title: None,
                         album: None,
                         artist: None,
-                        elapsed_time: None,
+                        elapsed_time: Some(position.as_secs() as u32),
                         cover_artwork: None,
                         is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                         duration: None,
@@ -310,7 +307,7 @@ impl MediaCenter {
                     play_state.notified().await;
 
                     // i dont wanna just hold this indefinitely
-                    let last_track = inner_self.last_track.load_full();
+                    let last_track = inner_self.last_track.load();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
@@ -368,7 +365,6 @@ impl MediaCenter {
             let deezer_client = deezer_client.clone();
             let play_state_notify = play_state_notify.clone();
             let inner_self = inner_self.clone();
-            let last_track = inner_self.last_track.load_full();
             tauri::async_runtime::spawn(async move {
                 let Some(media) = event else { return };
                 if media.title.is_none() && media.album.is_none() {
@@ -387,9 +383,28 @@ impl MediaCenter {
                     duration: media.duration.map(|t| t as u32),
                     isrc: None,
                 };
+                if !media_info.is_playing {
+                    if let Some(track) = inner_self.last_track.load().as_ref() {
+                        if track.title == media_info.title && track.artist == media_info.artist {
+                            // when a new track is selected, apple music pauses the current track
+                            // and plays the chosen one at the same time. this causes races, and
+                            // the pause event usually loses for some reason (should not be the case)
+                            // so we short circuit here. this guarantees a win, especially bc of the
+                            // deezer enrichment
+                            let mut paused = track.deref().clone();
+                            paused.is_playing = false;
+                            paused.elapsed_time = media_info.elapsed_time;
+                            let paused_arc = Arc::new(paused);
+                            inner_self.last_track.store(Some(paused_arc.clone()));
+                            tx.send(TrackUpdateEvent::PlaybackStateChange(paused_arc))
+                                .unwrap();
+                        }
+                    }
+                }
 
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
+                let last_track = inner_self.last_track.load_full();
                 let mut enriched_track =
                     if Self::media_info_equal(last_track.as_deref(), &media_info) {
                         let mut cached = last_track.as_deref().unwrap().clone();
