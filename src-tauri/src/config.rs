@@ -167,6 +167,8 @@ impl Scrobbler {
 pub struct Config {
     pub scrobblers: Vec<Scrobbler>,
     pub discord_rpc_enabled: bool,
+    #[serde(default)]
+    pub upload_cover_artwork: bool,
 }
 
 impl Default for Config {
@@ -174,6 +176,7 @@ impl Default for Config {
         Config {
             scrobblers: Vec::new(),
             discord_rpc_enabled: false,
+            upload_cover_artwork: false,
         }
     }
 }

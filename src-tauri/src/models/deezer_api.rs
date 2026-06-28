@@ -1,5 +1,6 @@
 use crate::http;
 use crate::models;
+use crate::models::CoverArtwork;
 use moka::future::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
@@ -181,7 +182,11 @@ impl DeezerClient {
                 Some(media_info.artist.clone().unwrap_or(enriched_track.artist))
             },
             elapsed_time: media_info.elapsed_time,
-            cover_artwork: enriched_track.cover_artwork,
+            cover_artwork: Some(CoverArtwork::from_url(
+                enriched_track
+                    .cover_artwork
+                    .unwrap_or_else(|| "default".to_string()),
+            )),
             is_playing: media_info.is_playing,
             duration: if media_info.duration.is_some_and(|d| d == 0) {
                 Some(enriched_track.duration as u32)

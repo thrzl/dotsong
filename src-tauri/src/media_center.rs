@@ -1,9 +1,10 @@
 use crate::config::Scrobbler;
-use crate::models::{self, MediaInfo};
+use crate::models::{self, CoverArtwork, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
+use bytes::Bytes;
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -33,6 +34,7 @@ pub struct MediaCenter {
     #[cfg(target_os = "macos")]
     macos_listener: Arc<Mutex<Option<media_remote::NowPlayingPerl>>>,
     deezer_client: Arc<models::deezer_api::DeezerClient>,
+    config: Arc<RwLock<crate::config::Config>>,
 
     play_state_notify: Arc<Notify>,
 }
@@ -41,7 +43,7 @@ impl MediaCenter {
     pub fn set_scrobblers(&self, scrobblers: Vec<Scrobbler>) {
         self.scrobblers.store(Arc::new(scrobblers));
     }
-    pub fn new(scrobblers: Vec<Scrobbler>) -> Self {
+    pub fn new(scrobblers: Vec<Scrobbler>, config: Arc<RwLock<crate::config::Config>>) -> Self {
         let (tx, _) = watch::channel(TrackUpdateEvent::PlaybackStateChange(Arc::new(
             MediaInfo::default(),
         )));
@@ -55,6 +57,7 @@ impl MediaCenter {
             macos_listener: Arc::new(Mutex::new(None)),
             deezer_client: Arc::new(models::deezer_api::DeezerClient::new(100)),
             play_state_notify: Arc::new(Notify::new()),
+            config,
         }
     }
 
@@ -83,8 +86,9 @@ impl MediaCenter {
     pub fn start_media_poller(self: Arc<Self>) {
         println!("starting media poller");
         let source_fut = nowhear::MediaSourceBuilder::new().build();
-        let s = self.clone();
+        let inner_self = self.clone();
         tauri::async_runtime::spawn(async move {
+            let inner_self = self.clone();
             let now_playing = match source_fut.await {
                 Ok(np) => np,
                 Err(e) => {
@@ -103,42 +107,73 @@ impl MediaCenter {
                 let Some(media_info) = Self::build_media_info(&now_playing, &event).await else {
                     continue;
                 };
+                println!("received media info: {:?}", media_info);
                 let player_name = match &event {
                     nowhear::MediaEvent::TrackChanged { player_name, .. }
                     | nowhear::MediaEvent::PositionChanged { player_name, .. }
                     | nowhear::MediaEvent::StateChanged { player_name, .. } => player_name,
                     _ => continue,
                 };
-                let last_track = self.last_track.load_full();
+                let last_track = inner_self.last_track.load_full();
                 let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
-                let enriched = if same_track {
-                    last_track.as_ref().unwrap()
+                let mut enriched = if same_track {
+                    last_track.as_ref().unwrap().deref().clone()
                 } else {
-                    &Arc::new(
-                        self.deezer_client
-                            .enrich_media_info(
-                                &media_info,
-                                player_name.to_lowercase().contains("applemusic"),
-                            )
-                            .await
-                            .unwrap_or(media_info),
-                    )
+                    inner_self
+                        .deezer_client
+                        .enrich_media_info(
+                            &media_info,
+                            player_name.to_lowercase().contains("applemusic"),
+                        )
+                        .await
+                        .unwrap_or(media_info)
                 };
-                if Self::media_info_equal(self.last_track.load_full().as_deref(), &enriched) {
-                    self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(enriched.clone()))
+                if !enriched
+                    .cover_artwork
+                    .as_ref()
+                    .is_some_and(|c| c.url().is_some())
+                {
+                    enriched.cover_artwork = match enriched.cover_artwork.take() {
+                        Some(mut cover) if cover.bytes().is_some() => {
+                            if !inner_self.config.read().upload_cover_artwork {
+                                None
+                            } else {
+                                match cover.upload_bytes().await {
+                                    Ok(_) => {
+                                        println!("uploaded cover artwork");
+                                        Some(cover)
+                                    }
+                                    Err(e) => {
+                                        println!("upload failed: {:?}", e);
+                                        None
+                                    }
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                }
+                if Self::media_info_equal(inner_self.last_track.load_full().as_deref(), &enriched) {
+                    inner_self
+                        .track_tx
+                        .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+                            enriched.clone(),
+                        )))
                         .unwrap();
                     continue;
                 }
-                self.elapsed_offset.store(0, Ordering::Relaxed);
-                self.last_track.store(Some(enriched.clone()));
-                self.play_state_notify.notify_one();
-                self.track_tx
-                    .send(TrackUpdateEvent::NewTrack(enriched.clone()))
+                inner_self.elapsed_offset.store(0, Ordering::Relaxed);
+                inner_self
+                    .last_track
+                    .store(Some(Arc::new(enriched.clone())));
+                inner_self.play_state_notify.notify_one();
+                inner_self
+                    .track_tx
+                    .send(TrackUpdateEvent::NewTrack(Arc::new(enriched.clone())))
                     .unwrap();
             }
         });
-        s.clone().start_position_ticker();
+        inner_self.clone().start_position_ticker();
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -195,7 +230,10 @@ impl MediaCenter {
                                 .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: Some(position.as_secs() as u32),
-                            cover_artwork: track.art_url,
+                            cover_artwork: track
+                                .artwork
+                                .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
+                                .flatten(),
                             is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                             duration: track.duration.map(|t| t.as_secs() as u32),
                             isrc: None,
@@ -230,7 +268,10 @@ impl MediaCenter {
                                 .map(|album| Self::sanitize_apple_music_album_name(&album)),
                             artist: Some(artist.join(", ")),
                             elapsed_time: player.position.map(|p| p.as_secs() as u32),
-                            cover_artwork: track.art_url,
+                            cover_artwork: track
+                                .artwork
+                                .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
+                                .flatten(),
                             is_playing: player.playback_state == nowhear::PlaybackState::Playing,
                             duration: track.duration.map(|d| d.as_secs() as u32),
                             isrc: None,
@@ -329,12 +370,12 @@ impl MediaCenter {
                 if media.title.is_none() && media.album.is_none() {
                     return;
                 }
-                
+
                 let media_info = MediaInfo {
                     title: media.title,
                     album: media
-                    .album
-                    .map(|album| Self::sanitize_apple_music_album_name(&album)),
+                        .album
+                        .map(|album| Self::sanitize_apple_music_album_name(&album)),
                     artist: media.artist,
                     elapsed_time: media.elapsed_time.map(|t| t as u32),
                     cover_artwork: None,
@@ -345,8 +386,8 @@ impl MediaCenter {
                 if !media_info.is_playing {
                     if let Some(track) = inner_self.last_track.load().as_ref() {
                         if track.title == media_info.title && track.artist == media_info.artist {
-                            // when a new track is selected, apple music pauses the current track 
-                            // and plays the chosen one at the same time. this causes races, and 
+                            // when a new track is selected, apple music pauses the current track
+                            // and plays the chosen one at the same time. this causes races, and
                             // the pause event usually loses for some reason (should not be the case)
                             // so we short circuit here. this guarantees a win, especially bc of the
                             // deezer enrichment
@@ -355,46 +396,86 @@ impl MediaCenter {
                             paused.elapsed_time = media_info.elapsed_time;
                             let paused_arc = Arc::new(paused);
                             inner_self.last_track.store(Some(paused_arc.clone()));
-                            tx.send(TrackUpdateEvent::PlaybackStateChange(paused_arc)).unwrap();
+                            tx.send(TrackUpdateEvent::PlaybackStateChange(paused_arc))
+                                .unwrap();
                         }
                     }
                 }
-                
+
                 // asynchronous enriching of media info with Deezer API
                 let media_info_clone = media_info.clone();
                 let last_track = inner_self.last_track.load_full();
-                let enriched_track: Arc<MediaInfo> =
-                if Self::media_info_equal(last_track.as_deref(), &media_info) {
-                    let mut cached = last_track.as_deref().unwrap().clone();
-                    cached.elapsed_time = media_info.elapsed_time;
-                    cached.duration = media_info.duration;
-                    cached.is_playing = media_info.is_playing;
-                    Arc::new(cached)
-                } else {
-                    Arc::new(
+                let mut enriched_track =
+                    if Self::media_info_equal(last_track.as_deref(), &media_info) {
+                        let mut cached = last_track.as_deref().unwrap().clone();
+                        cached.elapsed_time = media_info.elapsed_time;
+                        cached.duration = media_info.duration;
+                        cached.is_playing = media_info.is_playing;
+                        cached
+                    } else {
                         deezer_client
-                        .enrich_media_info(&media_info_clone, false)
-                        .await
-                        .unwrap_or(media_info),
-                    )
+                            .enrich_media_info(&media_info_clone, false)
+                            .await
+                            .unwrap_or(media_info)
+                    };
+
+                if enriched_track.cover_artwork.is_none()
+                    || enriched_track
+                        .cover_artwork
+                        .clone()
+                        .unwrap()
+                        .url()
+                        .is_none()
+                {
+                    enriched_track.cover_artwork = if let Some(url) = enriched_track
+                        .cover_artwork
+                        .map(|c| c.url().map(|s| s.to_string()))
+                        .flatten()
+                    {
+                        // if deezer got an image, that's fine
+                        Some(CoverArtwork::from_url(url.to_string()))
+                    } else if let Some(cover_artwork) = media.album_cover {
+                        // otherwise, we should upload the bytes
+                        if !inner_self.config.read().upload_cover_artwork {
+                            None
+                        } else {
+                            let mut cover = CoverArtwork::from_dynamic_image(&cover_artwork);
+                            match cover.upload_bytes().await {
+                                Ok(url) => {
+                                    println!("uploaded cover artwork: {}", url);
+                                    Some(cover)
+                                }
+                                Err(e) => {
+                                    println!("upload failed: {:?}", e);
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    }
                 };
-                
+
                 if Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched_track) {
                     if last_track.as_ref().map(|v| v.is_playing) != Some(enriched_track.is_playing)
                     {
-                        tx.send(TrackUpdateEvent::PlaybackStateChange(
+                        tx.send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
                             enriched_track.clone(),
-                        ))
+                        )))
                         .unwrap();
                     } else {
-                        tx.send(TrackUpdateEvent::PositionChanged(enriched_track.clone()))
-                            .unwrap();
+                        tx.send(TrackUpdateEvent::PositionChanged(Arc::new(
+                            enriched_track.clone(),
+                        )))
+                        .unwrap();
                     }
                 } else {
-                    tx.send(TrackUpdateEvent::NewTrack(enriched_track.clone()))
+                    tx.send(TrackUpdateEvent::NewTrack(Arc::new(enriched_track.clone())))
                         .unwrap();
                 };
-                inner_self.last_track.store(Some(enriched_track.clone()));
+                inner_self
+                    .last_track
+                    .store(Some(Arc::new(enriched_track.clone())));
                 play_state_notify.notify_one();
             });
         });

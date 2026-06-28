@@ -1072,6 +1072,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "bytes",
  "chrono",
  "dirs 6.0.0",
  "discord-presence",
@@ -1096,6 +1097,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "tray-icon",
+ "xxhash",
 ]
 
 [[package]]
@@ -2607,13 +2609,14 @@ checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "media-remote"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d069866fc99771aef8d8238d4f58dbb4e3c92404bcec4823e5402e1e0b2c03fa"
+version = "0.5.2"
+source = "git+https://github.com/nohackjustnoobb/media-remote#17821e2105f3e8f08c38062145b70b8ac2ca5290"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "dispatch2 0.2.0",
  "flate2",
+ "image",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -2644,6 +2647,16 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -2786,11 +2799,15 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "nowhear"
-version = "0.2.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c6c3cd5b42864387d68a9209ad01abfb4341423e53fb32e28918f9c3dc75cc2"
+checksum = "d3cd0d899c65fc8980050bcf15b957a5eb376cbf357cb6d139bade1fc3f4ab02"
 dependencies = [
+ "base64 0.22.1",
  "futures",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3823,6 +3840,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -5410,6 +5428,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6373,6 +6397,11 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash"
+version = "0.1.0"
+source = "git+https://github.com/rust-stdx/stdx#3b352d0e3f98793936f1880162ee7652971feba2"
 
 [[package]]
 name = "y4m"

@@ -5,6 +5,7 @@ mod media_center;
 mod models;
 
 use discord_presence::DiscordError;
+use last_fm_rs::ScrobbleResponse;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
@@ -17,6 +18,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::Manager;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
+
+use crate::models::CoverArtwork;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -270,7 +273,14 @@ impl AppState {
                                 .state(media_info.artist())
                                 .details(media_info.title())
                                 .assets(|assets| {
-                                    let assets = assets.large_image(media_info.cover_artwork());
+                                    let assets = assets.large_image(
+                                        media_info
+                                            .cover_artwork
+                                            .clone()
+                                            .unwrap_or_default()
+                                            .url()
+                                            .unwrap_or("default"),
+                                    );
                                     let album_name = media_info.album();
                                     if !album_name.is_empty() {
                                         assets.large_text(album_name)
@@ -391,10 +401,12 @@ pub fn run() {
                     default_config
                 }
             };
+            let scrobblers = config.scrobblers.clone();
+            let config = Arc::new(RwLock::new(config));
             let app_state = AppState {
-                media_center: Arc::new(MediaCenter::new(config.scrobblers.clone())),
+                media_center: Arc::new(MediaCenter::new(scrobblers, config.clone())),
                 quitting: AtomicBool::new(false),
-                config: Arc::new(RwLock::new(config)),
+                config,
                 config_path: app_config_dir.join("dotsong_config.json"),
                 presence_task: Arc::new(Mutex::new(None)),
                 rpc: Arc::new(Mutex::new(None)),
