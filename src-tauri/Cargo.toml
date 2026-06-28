@@ -48,7 +48,7 @@ xxhash = { git = "https://github.com/rust-stdx/stdx", version = "0.1.0" }
 media-remote = { git = "https://github.com/nohackjustnoobb/media-remote", version = "0.5.2" }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-nowhear = "0.2.0"
+nowhear = "0.5.0"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
