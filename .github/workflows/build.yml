@@ -23,10 +23,6 @@ jobs:
       artifact-metadata: write
     timeout-minutes: 45
 
-    concurrency:
-      group: build-${{ github.ref }}
-      cancel-in-progress: true
-
     strategy:
       fail-fast: true
       matrix:
