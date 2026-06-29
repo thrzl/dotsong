@@ -115,7 +115,7 @@ impl NowHearSource {
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[async_trait::async_trait]
 impl OsMediaSource for NowHearSource {
-    async fn next_event(&self) -> Option<MediaSourceEvent> {
+    async fn next_event(&self) -> Option<MediaInfo> {
         let mut source_guard = self.source.lock().await;
         if source_guard.is_none() {
             match nowhear::MediaSourceBuilder::new().build().await {
@@ -148,7 +148,7 @@ impl OsMediaSource for NowHearSource {
 async fn build_event(
     source: &nowhear::source::PlatformMediaSource,
     event: nowhear::MediaEvent,
-) -> Option<MediaSourceEvent> {
+) -> Option<MediaInfo> {
     match event {
         nowhear::MediaEvent::TrackChanged { player_name, track } => {
             let player = source.get_player(&player_name).await.ok()?;
@@ -160,22 +160,20 @@ async fn build_event(
             } else {
                 track.artist
             };
-            Some(MediaSourceEvent {
-                info: MediaInfo {
-                    title: Some(track.title),
-                    album: track
-                        .album
-                        .map(|album| sanitize_apple_music_album_name(&album)),
-                    artist: Some(artist.join(", ")),
-                    elapsed_time: Some(0),
-                    cover_artwork: track
-                        .artwork
-                        .and_then(|art| CoverArtwork::from_nowhear_artwork(art)),
-                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                    duration: track.duration.map(|t| t.as_secs() as u32),
-                    isrc: None,
-                },
-                is_apple_music,
+            Some(MediaInfo {
+                title: Some(track.title),
+                album: track
+                    .album
+                    .map(|album| sanitize_apple_music_album_name(&album)),
+                artist: Some(artist.join(", ")),
+                elapsed_time: Some(0),
+                cover_artwork: track
+                    .artwork
+                    .and_then(|art| CoverArtwork::from_nowhear_artwork(art)),
+                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                duration: track.duration.map(|t| t.as_secs() as u32),
+                isrc: None,
+                player_name: Some(player_name),
             })
         }
         nowhear::MediaEvent::PositionChanged {
@@ -185,18 +183,16 @@ async fn build_event(
             let player = source.get_player(&player_name).await.ok()?;
             let is_apple_music = player_name.to_lowercase().contains("applemusic");
             let Some(track) = player.current_track else {
-                return Some(MediaSourceEvent {
-                    info: MediaInfo {
-                        title: None,
-                        album: None,
-                        artist: None,
-                        elapsed_time: Some(position.as_secs() as u32),
-                        cover_artwork: None,
-                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                        duration: None,
-                        isrc: None,
-                    },
-                    is_apple_music,
+                return Some(MediaInfo {
+                    title: None,
+                    album: None,
+                    artist: None,
+                    elapsed_time: Some(position.as_secs() as u32),
+                    cover_artwork: None,
+                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                    duration: None,
+                    isrc: None,
+                    player_name: Some(player_name),
                 });
             };
             let artist = if is_apple_music {
@@ -204,41 +200,36 @@ async fn build_event(
             } else {
                 track.artist
             };
-            Some(MediaSourceEvent {
-                info: MediaInfo {
-                    title: Some(track.title),
-                    album: track
-                        .album
-                        .map(|album| sanitize_apple_music_album_name(&album)),
-                    artist: Some(artist.join(", ")),
-                    elapsed_time: Some(position.as_secs() as u32),
-                    cover_artwork: track
-                        .artwork
-                        .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
-                        .flatten(),
-                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                    duration: track.duration.map(|t| t.as_secs() as u32),
-                    isrc: None,
-                },
-                is_apple_music,
+            Some(MediaInfo {
+                title: Some(track.title),
+                album: track
+                    .album
+                    .map(|album| sanitize_apple_music_album_name(&album)),
+                artist: Some(artist.join(", ")),
+                elapsed_time: Some(position.as_secs() as u32),
+                cover_artwork: track
+                    .artwork
+                    .and_then(|art| CoverArtwork::from_nowhear_artwork(art)),
+                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                duration: track.duration.map(|t| t.as_secs() as u32),
+                isrc: None,
+                player_name: Some(player_name),
             })
         }
         nowhear::MediaEvent::StateChanged { player_name, .. } => {
             let player = source.get_player(&player_name).await.ok()?;
             let is_apple_music = player_name.to_lowercase().contains("applemusic");
             let Some(track) = player.current_track else {
-                return Some(MediaSourceEvent {
-                    info: MediaInfo {
-                        title: None,
-                        album: None,
-                        artist: None,
-                        elapsed_time: None,
-                        cover_artwork: None,
-                        is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                        duration: None,
-                        isrc: None,
-                    },
-                    is_apple_music,
+                return Some(MediaInfo {
+                    title: None,
+                    album: None,
+                    artist: None,
+                    elapsed_time: None,
+                    cover_artwork: None,
+                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                    duration: None,
+                    isrc: None,
+                    player_name: Some(player_name),
                 });
             };
             let artist = if is_apple_music {
@@ -246,23 +237,20 @@ async fn build_event(
             } else {
                 track.artist
             };
-            Some(MediaSourceEvent {
-                info: MediaInfo {
-                    title: Some(track.title),
-                    album: track
-                        .album
-                        .map(|album| sanitize_apple_music_album_name(&album)),
-                    artist: Some(artist.join(", ")),
-                    elapsed_time: player.position.map(|p| p.as_secs() as u32),
-                    cover_artwork: track
-                        .artwork
-                        .map(|artwork| CoverArtwork::from_nowhear_artwork(artwork))
-                        .flatten(),
-                    is_playing: player.playback_state == nowhear::PlaybackState::Playing,
-                    duration: track.duration.map(|d| d.as_secs() as u32),
-                    isrc: None,
-                },
-                is_apple_music,
+            Some(MediaInfo {
+                title: Some(track.title),
+                album: track
+                    .album
+                    .map(|album| sanitize_apple_music_album_name(&album)),
+                artist: Some(artist.join(", ")),
+                elapsed_time: player.position.map(|p| p.as_secs() as u32),
+                cover_artwork: track
+                    .artwork
+                    .and_then(|art| CoverArtwork::from_nowhear_artwork(art)),
+                is_playing: player.playback_state == nowhear::PlaybackState::Playing,
+                duration: track.duration.map(|d| d.as_secs() as u32),
+                isrc: None,
+                player_name: Some(player_name),
             })
         }
         _ => None,

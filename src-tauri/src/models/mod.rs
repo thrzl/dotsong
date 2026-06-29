@@ -113,7 +113,7 @@ impl CoverArtwork {
         Ok(url)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn from_nowhear_artwork(artwork: nowhear::Artwork) -> Option<Self> {
         match artwork {
             nowhear::Artwork::Url { url } => {
