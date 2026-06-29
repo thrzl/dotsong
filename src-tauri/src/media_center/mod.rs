@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
 
+pub static BROWSERS: &[&str] = &["chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion", "chromium"];
+
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
     NewTrack(Arc<MediaInfo>),
@@ -81,18 +83,29 @@ impl MediaCenter {
         self.clone().start_position_ticker();
     }
 
-    async fn process_event(self: &Arc<Self>, media_info: MediaInfo) {
+    async fn process_event(self: &Arc<Self>, mut media_info: MediaInfo) {
         if media_info.title.as_ref().is_none_or(|t| t.is_empty()) && media_info.artist.as_ref().is_none_or(|a| a.is_empty()) {
             println!("ignoring event [empty]");
             return;
         }
+        let mut useless_browser_track = false;
+        if media_info.is_browser() {
+            if !self.config.read().allow_browsers {
+                println!("ignoring event [browser]");
+                return
+            }
+            // if any of the following is true, we're good to continue:
+            // 1. album is some and not empty
+            // 2. the artist ends with "- Topic"
+            if media_info.album.as_ref().is_none_or(|a| a.is_empty())
+                && !media_info.artist.as_ref().is_some_and(|a| a.ends_with("- Topic"))
+            {
+                println!("ignoring event [browser topic]");
+                useless_browser_track = true;
+            }
+        }
+        media_info.artist = media_info.artist.as_ref().map(|t| t.trim_end_matches(" - Topic").to_string());
 
-        // Apple Music race mitigation: when a new track is selected, Music
-        // pauses the current track and plays the chosen one at the same time.
-        // The pause event usually loses to the deezer enrichment for the new
-        // track, leaving us stuck on the old "playing" state. If we see a
-        // same-track pause, emit it now — before any enrichment work — so
-        // the play-state change lands first.
         if !media_info.is_playing {
             if let Some(track) = self.last_track.load().as_ref() {
                 if track.title == media_info.title && track.artist == media_info.artist {
@@ -121,8 +134,12 @@ impl MediaCenter {
             self.deezer_client
                 .enrich_media_info(&media_info)
                 .await
-                .unwrap_or(media_info)
+                .unwrap_or(media_info.clone())
         };
+        if useless_browser_track && enriched == media_info {
+            println!("ignoring event [useless browser track]");
+            return;
+        }
 
         if !enriched
             .cover_artwork
@@ -221,9 +238,6 @@ impl MediaCenter {
                         let _ = tx.send(TrackUpdateEvent::Tick(Arc::new(track)));
                     }
                     _ = play_state.notified() => {
-                        // A media event arrived. Whatever it said is the new
-                        // ground truth; reset our offset so the next tick
-                        // adds on top of the OS-reported position.
                         elapsed_offset.store(0, Ordering::Relaxed);
                         is_playing = inner_self.last_track.load_full()
                             .is_some_and(|t| t.is_playing);

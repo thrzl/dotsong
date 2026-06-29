@@ -40,6 +40,7 @@
         scrobblers: Scrobbler[];
         discord_rpc_enabled: boolean;
         upload_cover_artwork: boolean;
+        allow_browsers: boolean;
     };
 
     const FORMATS = [
@@ -94,6 +95,7 @@
         scrobblers: [],
         discord_rpc_enabled: false,
         upload_cover_artwork: false,
+        allow_browsers: false,
     };
 
     let config = $state<Config>(structuredClone(defaults));
@@ -268,6 +270,7 @@
             })),
             discord_rpc_enabled: config.discord_rpc_enabled,
             upload_cover_artwork: config.upload_cover_artwork,
+            allow_browsers: config.allow_browsers,
         };
         if (!loaded) return;
         saveStatus = "saving";
@@ -398,6 +401,22 @@
             id="upload-cover-artwork"
             bind:checked={config.upload_cover_artwork}
             aria-label="upload cover artwork"
+        />
+    </Field.Field>
+
+    <Separator />
+
+    <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+            <Field.FieldTitle>allow browsers</Field.FieldTitle>
+            <Field.FieldDescription>
+                allow dotsong to track media from web browsers. it tries its best to exclude non-music playback, but accuracy will vary
+            </Field.FieldDescription>
+        </Field.FieldContent>
+        <Switch
+            id="allow-browsers"
+            bind:checked={config.allow_browsers}
+            aria-label="allow browsers"
         />
     </Field.Field>
 

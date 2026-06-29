@@ -58,7 +58,7 @@ impl DeezerClient {
             .trim()
             .to_string();
         let query = utf8_percent_encode(
-            &format!("{} {} {}", clean_title, track.album(), track.artist()),
+            &format!("{} {} {}", clean_title, track.album(), track.artist().trim_end_matches(" - Topic")),
             NON_ALPHANUMERIC,
         )
         .to_string();
@@ -99,16 +99,18 @@ impl DeezerClient {
                     deezer_artist.contains(&track_artist) || track_artist.contains(&deezer_artist);
                 title_matches && artist_matches
             });
-            let final_track = if track.album.is_some() {
+            let final_track = if track.album.as_ref().is_some_and(|a| !a.is_empty()) {
                 tracks.find(|t| {
                     t["album"]["title"].as_str().map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
                         == track.album().to_lowercase().into()
                 })
             } else {
+                println!("deezer track search: no album info, returning first match");
                 tracks.into_iter().next()
             };
             final_track
         };
+        println!("deezer track search for query: {} found: {:?}", query, track_info);
         let track = Some(DeezerTrack {
             id: track_info?["id"].as_u64()?,
             title: track_info?["title"].as_str()?.to_string(),
@@ -171,8 +173,8 @@ impl DeezerClient {
             } else {
                 Some(
                     media_info
-                        .album
-                        .clone()
+                        .album.clone()
+                        .and_then(|a| if a.is_empty() {None} else {Some(a)})
                         .unwrap_or(enriched_track.album.title),
                 )
             },

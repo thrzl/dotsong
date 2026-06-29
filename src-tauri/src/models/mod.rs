@@ -1,4 +1,4 @@
-use crate::http;
+use crate::{http, media_center::BROWSERS};
 use bytes::Bytes;
 use image::DynamicImage;
 use moka::future::Cache;
@@ -16,7 +16,7 @@ static LITTERBOX_CACHE: LazyLock<Cache<u64, String>> = LazyLock::new(|| {
 pub mod deezer_api;
 pub mod listenbrainz;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CoverArtwork {
     data: Option<Bytes>,
     url: Option<String>,
@@ -154,7 +154,7 @@ impl Default for CoverArtwork {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MediaInfo {
     pub title: Option<String>,
     pub album: Option<String>,
@@ -181,6 +181,12 @@ impl MediaInfo {
         self.player_name
             .as_ref()
             .map(|name| name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")) // holy genius yo
+            .unwrap_or(false)
+    }
+    pub fn is_browser(&self) -> bool {
+        self.player_name
+            .as_deref()
+            .map(|name| BROWSERS.contains(&name.to_lowercase().as_str()))
             .unwrap_or(false)
     }
 }

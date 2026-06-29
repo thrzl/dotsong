@@ -169,6 +169,8 @@ pub struct Config {
     pub discord_rpc_enabled: bool,
     #[serde(default)]
     pub upload_cover_artwork: bool,
+    #[serde(default)]
+    pub allow_browsers: bool,
 }
 
 impl Default for Config {
@@ -177,6 +179,7 @@ impl Default for Config {
             scrobblers: Vec::new(),
             discord_rpc_enabled: false,
             upload_cover_artwork: false,
+            allow_browsers: false,
         }
     }
 }
