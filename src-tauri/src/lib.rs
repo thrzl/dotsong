@@ -345,7 +345,7 @@ pub fn run() {
                 .icon(icon)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        let quitting = &app.state::<Arc<AppState>>().quitting;
+                        let quitting = &app.state::<AppState>().quitting;
                         quitting.store(true, std::sync::atomic::Ordering::SeqCst);
                         app.exit(0);
                     }
@@ -442,11 +442,10 @@ pub fn run() {
         .expect("error while running tauri application");
     program.run(|_app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
-            let s: State<AppState> = _app.state();
-            if s.quitting.load(std::sync::atomic::Ordering::SeqCst) {
-                return;
+            let quitting = &_app.state::<AppState>().quitting;
+            if !quitting.load(std::sync::atomic::Ordering::SeqCst) {
+                api.prevent_exit();
             }
-            api.prevent_exit();
         }
         tauri::RunEvent::WindowEvent { label, event, .. } => {
             if label == "main" {
