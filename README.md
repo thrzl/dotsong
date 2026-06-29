@@ -58,7 +58,7 @@ nobody else does this for free, for some reason
 - [x] last.fm scrobbling
 - [x] libre.fm scrobbling (just last.fm to a diff url)
 - [x] check for updates
-- [ ] cover art uploading
+- [x] cover art uploading
 
 ## goals
 
