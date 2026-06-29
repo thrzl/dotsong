@@ -88,7 +88,7 @@ impl DeezerClient {
             })
         } else {
             let mut tracks = found_tracks.iter().filter(|t| {
-                let title_matches = t["title"].as_str().map(|s| s.to_lowercase())
+                let title_matches = t["title"].as_str().map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
                     == clean_title.to_lowercase().into();
                 let deezer_artist = t["artist"]["name"]
                     .as_str()
@@ -101,7 +101,7 @@ impl DeezerClient {
             });
             let final_track = if track.album.is_some() {
                 tracks.find(|t| {
-                    t["album"]["title"].as_str().map(|s| s.to_lowercase())
+                    t["album"]["title"].as_str().map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
                         == track.album().to_lowercase().into()
                 })
             } else {
@@ -132,9 +132,9 @@ impl DeezerClient {
 
     pub async fn enrich_media_info(
         &self,
-        media_info: &models::MediaInfo,
-        apple_music: bool,
+        media_info: &models::MediaInfo
     ) -> Option<models::MediaInfo> {
+        let apple_music = media_info.is_apple_music();
         let enriched_track = self.track_search(media_info, apple_music).await?;
         // if it's apple music, trust deezer more than the player
         // apple music artist field may look like this: "artist name album name" with no delimiter.
@@ -194,6 +194,7 @@ impl DeezerClient {
                 media_info.duration.or(Some(enriched_track.duration as u32))
             },
             isrc: enriched_track.isrc,
+            player_name: media_info.player_name.clone(),
         })
     }
 }

@@ -164,6 +164,7 @@ pub struct MediaInfo {
     pub is_playing: bool,
     pub duration: Option<u32>,
     pub isrc: Option<String>,
+    pub player_name: Option<String>,
 }
 
 impl MediaInfo {
@@ -176,6 +177,12 @@ impl MediaInfo {
     pub fn album(&self) -> &str {
         self.album.as_deref().unwrap_or_default()
     }
+    pub fn is_apple_music(&self) -> bool {
+        self.player_name
+            .as_ref()
+            .map(|name| name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")) // holy genius yo
+            .unwrap_or(false)
+    }
 }
 
 impl Default for MediaInfo {
@@ -186,6 +193,7 @@ impl Default for MediaInfo {
             artist: None,
             elapsed_time: None,
             cover_artwork: None,
+            player_name: None,
             is_playing: false,
             duration: None,
             isrc: None,
