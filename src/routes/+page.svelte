@@ -8,9 +8,9 @@
     } from "@tauri-apps/plugin-autostart";
     import { Input } from "$lib/components/ui/input";
     import { Button } from "$lib/components/ui/button";
-    import { Switch } from "$lib/components/ui/switch";
     import { Separator } from "$lib/components/ui/separator";
     import { Badge } from "$lib/components/ui/badge";
+    import ToggleOption from "$lib/components/ToggleOption.svelte";
     import * as Field from "$lib/components/ui/field";
     import * as Dialog from "$lib/components/ui/dialog";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
@@ -356,69 +356,39 @@
 
     <Separator />
 
-    <Field.Field orientation="horizontal">
-        <Field.FieldContent>
-            <Field.FieldTitle>launch at login</Field.FieldTitle>
-            <Field.FieldDescription>
-                start dotsong in the background automatically when you log in
-            </Field.FieldDescription>
-        </Field.FieldContent>
-        <Switch
-            id="autostart"
-            bind:checked={autostartEnabled}
-            aria-label="launch at login"
-        />
-    </Field.Field>
+    <ToggleOption
+        title="launch at login"
+        description="start dotsong in the background automatically when you log in"
+        id="autostart"
+        bind:value={autostartEnabled}
+        ariaLabel="launch at login"/>
 
     <Separator />
 
-    <Field.Field orientation="horizontal">
-        <Field.FieldContent>
-            <Field.FieldTitle>discord rich presence</Field.FieldTitle>
-            <Field.FieldDescription>
-                show the currently playing track in your discord status
-            </Field.FieldDescription>
-        </Field.FieldContent>
-        <Switch
-            id="discord-rpc"
-            bind:checked={config.discord_rpc_enabled}
-            aria-label="discord rich presence"
-        />
-    </Field.Field>
+    <ToggleOption
+        title="discord rich presence"
+        description="show the currently playing track in your discord status"
+        id="discord-rpc"
+        bind:value={config.discord_rpc_enabled}
+        ariaLabel="discord rich presence"/>
 
     <Separator />
 
-    <Field.Field orientation="horizontal">
-        <Field.FieldContent>
-            <Field.FieldTitle>upload cover artwork</Field.FieldTitle>
-            <Field.FieldDescription>
-                temporarily upload cover artwork to <a
-                    href="https://litterbox.catbox.moe">litterbox.catbox.moe</a
-                >. allows use of local artwork in discord rich presence.
-            </Field.FieldDescription>
-        </Field.FieldContent>
-        <Switch
-            id="upload-cover-artwork"
-            bind:checked={config.upload_cover_artwork}
-            aria-label="upload cover artwork"
-        />
-    </Field.Field>
+    <ToggleOption
+        title="upload cover artwork"
+        description="temporarily upload cover artwork to litterbox.catbox.moe. allows use of local artwork in discord rich presence."
+        id="upload-cover-artwork"
+        bind:value={config.upload_cover_artwork}
+        ariaLabel="upload cover artwork"/>
 
     <Separator />
 
-    <Field.Field orientation="horizontal">
-        <Field.FieldContent>
-            <Field.FieldTitle>allow browsers</Field.FieldTitle>
-            <Field.FieldDescription>
-                allow dotsong to track media from web browsers. it tries its best to exclude non-music playback, but accuracy will vary
-            </Field.FieldDescription>
-        </Field.FieldContent>
-        <Switch
-            id="allow-browsers"
-            bind:checked={config.allow_browsers}
-            aria-label="allow browsers"
-        />
-    </Field.Field>
+    <ToggleOption
+        title="allow browsers"
+        description="allow dotsong to track media from web browsers. it tries its best to exclude non-music playback, but accuracy will vary"
+        id="allow-browsers"
+        bind:value={config.allow_browsers}
+        ariaLabel="allow browsers"/>
 
     <Separator />
 
