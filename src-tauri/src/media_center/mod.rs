@@ -66,6 +66,7 @@ impl MediaCenter {
         previous.title == current.title
             && previous.artist == current.artist
             && previous.is_playing == current.is_playing
+            && current.elapsed_time.map(|d| d > 0).unwrap_or(false)
     }
 
     pub fn start_media_poller(self: Arc<Self>) {
