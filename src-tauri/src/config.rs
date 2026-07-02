@@ -1,7 +1,12 @@
+use std::sync::LazyLock;
+
 use crate::lastfm_auth;
 use crate::models::{listenbrainz, MediaInfo};
+use dashmap::DashMap;
 use last_fm_rs::{Client, NowPlaying, Scrobble};
 use serde::{Deserialize, Serialize};
+
+static CLIENT_POOL: LazyLock<DashMap<String, Client>> = LazyLock::new(|| DashMap::new());
 
 #[derive(Deserialize, Serialize, Clone)]
 pub enum ScrobblerFormat {
@@ -15,7 +20,13 @@ pub struct Scrobbler {
     id: String,
     endpoint_url: String,
     api_key: String,
-    format: ScrobblerFormat,
+    format: ScrobblerFormat
+}
+
+impl Drop for Scrobbler {
+    fn drop(&mut self) {
+        CLIENT_POOL.remove(&self.id);
+    }
 }
 
 pub enum LastFMHost {
@@ -52,14 +63,14 @@ impl Scrobbler {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let (api_key, api_secret) = match host {
-            LastFMHost::LastFM => (lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET),
-            LastFMHost::LibreFM => (
-                lastfm_auth::LIBREFM_API_KEY,
-                lastfm_auth::LIBREFM_API_SECRET,
-            ),
-        };
-        let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
+        let client = CLIENT_POOL.get(&self.id).unwrap_or_else(|| {
+            let client = match host {
+                LastFMHost::LastFM => Client::new(lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET).with_session_key(&self.api_key),
+                LastFMHost::LibreFM => Client::new(lastfm_auth::LIBREFM_API_KEY, lastfm_auth::LIBREFM_API_SECRET).with_session_key(&self.api_key),
+            };
+            CLIENT_POOL.insert(self.id.clone(), client);
+            CLIENT_POOL.get(&self.id).unwrap()
+        });
         let scrobble = Scrobble::new(track.artist(), track.title(), timestamp)
             .with_album(track.album())
             .with_duration(track.duration.unwrap_or_default().into());
@@ -123,14 +134,14 @@ impl Scrobbler {
             track.artist(),
             track.title()
         );
-        let (api_key, api_secret) = match host {
-            LastFMHost::LastFM => (lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET),
-            LastFMHost::LibreFM => (
-                lastfm_auth::LIBREFM_API_KEY,
-                lastfm_auth::LIBREFM_API_SECRET,
-            ),
-        };
-        let client = Client::new(api_key, api_secret).with_session_key(&self.api_key);
+        let client = CLIENT_POOL.get(&self.id).unwrap_or_else(|| {
+            let client = match host {
+                LastFMHost::LastFM => Client::new(lastfm_auth::LASTFM_API_KEY, lastfm_auth::LASTFM_API_SECRET).with_session_key(&self.api_key),
+                LastFMHost::LibreFM => Client::new(lastfm_auth::LIBREFM_API_KEY, lastfm_auth::LIBREFM_API_SECRET).with_session_key(&self.api_key),
+            };
+            CLIENT_POOL.insert(self.id.clone(), client);
+            CLIENT_POOL.get(&self.id).unwrap()
+        });
         let now_playing = NowPlaying::new(track.artist(), track.title())
             .with_album(track.album())
             .with_duration(track.duration.unwrap_or_default().into());

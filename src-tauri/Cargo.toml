@@ -43,6 +43,7 @@ semver = { version = "1.0.28", features = ["serde"] }
 arc-swap = "1.9.1"
 bytes = "1.12.0"
 xxhash = { git = "https://github.com/rust-stdx/stdx", version = "0.1.0" }
+dashmap = "6.2.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media-remote = { git = "https://github.com/nohackjustnoobb/media-remote", version = "0.5.2" }
