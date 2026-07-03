@@ -123,6 +123,8 @@ impl MediaCenter {
             media_info.elapsed_time = elapsed_time;
             media_info.is_playing = is_playing;
 
+            let media_info = Arc::new(media_info);
+
             if is_playing != last_track_is_playing {
                 // if they are the same track, but the playback state changed, we still want to send an event
                 println!(
@@ -130,22 +132,18 @@ impl MediaCenter {
                     last_track_is_playing, is_playing
                 );
                 self.track_tx
-                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
-                        media_info.clone(),
-                    )))
+                    .send(TrackUpdateEvent::PlaybackStateChange(media_info.clone()))
                     .ok();
                 self.play_state_notify.notify_one();
             } else {
                 // if they're the same track and the playback state didn't change, that means the position changed
                 println!("position changed");
                 self.track_tx
-                    .send(TrackUpdateEvent::PositionChanged(Arc::new(
-                        media_info.clone(),
-                    )))
+                    .send(TrackUpdateEvent::PositionChanged(media_info.clone()))
                     .ok();
                 self.play_state_notify.notify_one();
             }
-            self.last_track.store(Some(Arc::new(media_info.clone())));
+            self.last_track.store(Some(media_info));
             return;
         }
         media_info.title = media_info
