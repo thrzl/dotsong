@@ -187,8 +187,9 @@ impl MediaInfo {
         let Some(name) = &self.player_name else {
             return false;
         };
-        let name = name.to_lowercase();
-        BROWSERS.contains(&name.as_str())
+        BROWSERS
+            .iter()
+            .any(|&browser| browser.eq_ignore_ascii_case(&name))
     }
 }
 
