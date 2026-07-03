@@ -177,18 +177,18 @@ impl MediaInfo {
         self.album.as_deref().unwrap_or_default()
     }
     pub fn is_apple_music(&self) -> bool {
-        self.player_name
-            .as_ref()
-            .map(|name| {
-                name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")
-            }) // holy genius yo
-            .unwrap_or(false)
+        let Some(name) = &self.player_name else {
+            return false;
+        };
+        let name = name.to_lowercase();
+        name.contains("apple") && name.contains("music")
     }
     pub fn is_browser(&self) -> bool {
-        self.player_name
-            .as_deref()
-            .map(|name| BROWSERS.contains(&name.to_lowercase().as_str()))
-            .unwrap_or(false)
+        let Some(name) = &self.player_name else {
+            return false;
+        };
+        let name = name.to_lowercase();
+        BROWSERS.contains(&name.as_str())
     }
 }
 
