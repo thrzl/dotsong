@@ -24,7 +24,10 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12.5"
-image = "0.25.10"
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
 tauri-plugin-single-instance = "2.4.2"
 tauri-plugin-autostart = "2.5.1"
 tray-icon = "0.24.1"
@@ -34,7 +37,6 @@ reqwest = { version = "0.13.4", features = ["json", "multipart"] }
 chrono = "0.4.45"
 percent-encoding = "2.3.2"
 async-trait = "0.1.86"
-moka = { version = "0.12.15", features = ["future"] }
 regex = "1.12.4"
 dirs = "6.0.0"
 futures = "0.3.32"
@@ -42,8 +44,9 @@ last-fm-rs = { git = "https://github.com/thrzl/last-fm-rs", version = "20260120.
 semver = { version = "1.0.28", features = ["serde"] }
 arc-swap = "1.9.1"
 bytes = "1.12.0"
-dashmap = "6.2.1"
+dashmap = "6.1"
 xxhash-rust = { version = "0.8.16", features = ["xxh3"] }
+mini-moka = { version = "0.10.3", features = ["sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media-remote = { git = "https://github.com/nohackjustnoobb/media-remote", version = "0.5.2" }

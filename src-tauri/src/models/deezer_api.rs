@@ -1,7 +1,7 @@
 use crate::http;
 use crate::models;
 use crate::models::CoverArtwork;
-use moka::future::Cache;
+use mini_moka::sync::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -41,10 +41,7 @@ pub struct DeezerClient {
 impl DeezerClient {
     pub fn new(cache_size: u64) -> Self {
         DeezerClient {
-            cache: Cache::builder()
-                .max_capacity(cache_size)
-                .eviction_policy(moka::policy::EvictionPolicy::tiny_lfu())
-                .build(),
+            cache: Cache::builder().max_capacity(cache_size).build(),
         }
     }
 
@@ -58,11 +55,16 @@ impl DeezerClient {
             .trim()
             .to_string();
         let query = utf8_percent_encode(
-            &format!("{} {} {}", clean_title, track.album(), track.artist().trim_end_matches(" - Topic")),
+            &format!(
+                "{} {} {}",
+                clean_title,
+                track.album(),
+                track.artist().trim_end_matches(" - Topic")
+            ),
             NON_ALPHANUMERIC,
         )
         .to_string();
-        if let Some(cached_track) = self.cache.get(&query).await {
+        if let Some(cached_track) = self.cache.get(&query) {
             return Some(cached_track);
         }
         let url = format!("https://api.deezer.com/search?q={}", query);
@@ -88,7 +90,9 @@ impl DeezerClient {
             })
         } else {
             let mut tracks = found_tracks.iter().filter(|t| {
-                let title_matches = t["title"].as_str().map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
+                let title_matches = t["title"]
+                    .as_str()
+                    .map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
                     == clean_title.to_lowercase().into();
                 let deezer_artist = t["artist"]["name"]
                     .as_str()
@@ -101,7 +105,9 @@ impl DeezerClient {
             });
             let final_track = if track.album.as_ref().is_some_and(|a| !a.is_empty()) {
                 tracks.find(|t| {
-                    t["album"]["title"].as_str().map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
+                    t["album"]["title"]
+                        .as_str()
+                        .map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
                         == track.album().to_lowercase().into()
                 })
             } else {
@@ -110,7 +116,10 @@ impl DeezerClient {
             };
             final_track
         };
-        println!("deezer track search for query: {} found: {:?}", query, track_info);
+        println!(
+            "deezer track search for query: {} found: {:?}",
+            query, track_info
+        );
         let track = Some(DeezerTrack {
             id: track_info?["id"].as_u64()?,
             title: track_info?["title"].as_str()?.to_string(),
@@ -128,13 +137,13 @@ impl DeezerClient {
                 .map(|s| s.to_string()),
             duration: track_info?["duration"].as_u64().unwrap_or(0),
         });
-        self.cache.insert(query, track.clone().unwrap()).await;
+        self.cache.insert(query, track.clone().unwrap());
         track
     }
 
     pub async fn enrich_media_info(
         &self,
-        media_info: &models::MediaInfo
+        media_info: &models::MediaInfo,
     ) -> Option<models::MediaInfo> {
         let apple_music = media_info.is_apple_music();
         let enriched_track = self.track_search(media_info, apple_music).await?;
@@ -173,8 +182,9 @@ impl DeezerClient {
             } else {
                 Some(
                     media_info
-                        .album.clone()
-                        .and_then(|a| if a.is_empty() {None} else {Some(a)})
+                        .album
+                        .clone()
+                        .and_then(|a| if a.is_empty() { None } else { Some(a) })
                         .unwrap_or(enriched_track.album.title),
                 )
             },
