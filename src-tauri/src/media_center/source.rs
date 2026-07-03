@@ -10,15 +10,11 @@ use nowhear::MediaSource;
 
 use crate::models::{CoverArtwork, MediaInfo};
 
-/// A platform-agnostic async iterator over media events. Each platform supplies
-/// its own concrete implementation; the shared `MediaCenter` poller just drives
-/// `next_event` in a loop.
 #[async_trait::async_trait]
 pub trait OsMediaSource: Send + Sync {
     async fn next_event(&self) -> Option<MediaInfo>;
 }
 
-/// Build the right `OsMediaSource` for the current platform.
 pub fn create() -> Arc<dyn OsMediaSource> {
     #[cfg(target_os = "macos")]
     {
@@ -29,10 +25,6 @@ pub fn create() -> Arc<dyn OsMediaSource> {
         Arc::new(NowHearSource::new())
     }
 }
-
-// ---------------------------------------------------------------------------
-// macOS: media-remote adapter (sync callback) -> mpsc channel -> async
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
 use media_remote::Subscription;
