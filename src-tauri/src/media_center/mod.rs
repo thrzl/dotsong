@@ -208,7 +208,7 @@ impl MediaCenter {
                                 futures::future::pending().boxed() // just wait forever if the track is over, since we don't want to send a tick for a finished track
                             }
                         })
-                        .unwrap_or(tokio::time::sleep(tick).boxed())
+                        .unwrap_or_else(|| tokio::time::sleep(tick).boxed())
                 };
                 tokio::select! {
                     _ = tick_future => {
