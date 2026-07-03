@@ -1,6 +1,6 @@
 use crate::{http, media_center::BROWSERS};
 use bytes::Bytes;
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use moka::future::Cache;
 use std::sync::LazyLock;
 use xxhash::xxh3_64;
@@ -64,7 +64,7 @@ impl CoverArtwork {
     }
 
     pub fn from_dynamic_image(image: &DynamicImage) -> Self {
-        let rgb8 = image.to_rgb8();
+        let rgb8 = image.thumbnail(512, 512).to_rgb8();
         let mut buf = Vec::new();
         image::codecs::jpeg::JpegEncoder::new(&mut buf)
             .encode_image(&rgb8)
@@ -180,7 +180,9 @@ impl MediaInfo {
     pub fn is_apple_music(&self) -> bool {
         self.player_name
             .as_ref()
-            .map(|name| name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")) // holy genius yo
+            .map(|name| {
+                name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")
+            }) // holy genius yo
             .unwrap_or(false)
     }
     pub fn is_browser(&self) -> bool {
