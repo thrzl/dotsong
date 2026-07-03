@@ -1112,7 +1112,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "tray-icon",
- "xxhash",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -6420,9 +6420,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "xxhash"
-version = "0.1.0"
-source = "git+https://github.com/rust-stdx/stdx#3b352d0e3f98793936f1880162ee7652971feba2"
+name = "xxhash-rust"
+version = "0.8.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d93c89cdc2d3a63c3ec48ffe926931bdc069eafa8e4402fe6d8f790c9d1e576"
 
 [[package]]
 name = "y4m"

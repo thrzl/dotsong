@@ -3,7 +3,7 @@ use bytes::Bytes;
 use image::DynamicImage;
 use moka::future::Cache;
 use std::sync::LazyLock;
-use xxhash::xxh3_64;
+use xxhash_rust::xxh3::xxh3_64;
 
 static LITTERBOX_CACHE: LazyLock<Cache<u64, String>> = LazyLock::new(|| {
     Cache::builder()
