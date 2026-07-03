@@ -165,12 +165,15 @@ impl MediaCenter {
             media_info.artist()
         );
         // upload cover artwork to litterbox if its not there
-        if let Some(cover_artwork) = media_info.cover_artwork.as_mut() {
+        if let Some(cover_artwork) = &media_info.cover_artwork {
             if cover_artwork.url().is_none() && cover_artwork.bytes().is_some() {
-                match cover_artwork.upload_bytes().await {
-                    Ok(url) => {
-                        println!("uploaded cover artwork to litterbox: {}", url);
-                        media_info.cover_artwork = Some(CoverArtwork::from_url(url.clone()));
+                match cover_artwork.into_uploaded().await {
+                    Ok(uploaded_artwork) => {
+                        println!(
+                            "uploaded cover artwork to litterbox: {}",
+                            uploaded_artwork.url().unwrap_or_else(|| "unknown".into())
+                        );
+                        media_info.cover_artwork = Some(uploaded_artwork);
                     }
                     Err(e) => {
                         println!("failed to upload cover artwork to litterbox: {}", e);

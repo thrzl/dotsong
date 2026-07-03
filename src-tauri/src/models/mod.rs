@@ -22,9 +22,9 @@ pub struct CoverArtwork {
 }
 
 impl CoverArtwork {
-    pub fn bytes(&self) -> Option<Bytes> {
+    pub fn bytes(&self) -> Option<&Bytes> {
         if let Some(data) = &self.data {
-            return Some(data.clone());
+            return Some(data);
         };
         return None;
     }
@@ -80,13 +80,14 @@ impl CoverArtwork {
         self.data = None;
     }
 
-    pub async fn upload_bytes(&mut self) -> Result<String, reqwest::Error> {
-        let bytes = self.data.clone().unwrap_or_else(|| Bytes::new());
+    pub async fn into_uploaded(&self) -> Result<Self, reqwest::Error> {
+        let Some(bytes) = self.data.as_ref() else {
+            return Ok(Self::from_url("default".to_string()));
+        };
         let hash = xxh3_64(&bytes);
         if let Some(cached_url) = LITTERBOX_CACHE.get(&hash) {
             println!("already uploaded image {:016x}, cache hit", hash);
-            self.url = Some(cached_url.clone());
-            return Ok(cached_url);
+            return Ok(Self::from_url(cached_url.clone()));
         }
         let form = reqwest::multipart::Form::new()
             .text("reqtype", "fileupload")
@@ -94,7 +95,7 @@ impl CoverArtwork {
             .text("time", "1h")
             .part(
                 "fileToUpload",
-                reqwest::multipart::Part::bytes(bytes.to_vec())
+                reqwest::multipart::Part::stream(bytes.clone())
                     .file_name("cover_image.jpg")
                     .mime_str("image/jpg")
                     .unwrap(),
@@ -107,9 +108,8 @@ impl CoverArtwork {
             .await?;
 
         let url = res.text().await?;
-        self.url = Some(url.clone());
         LITTERBOX_CACHE.insert(hash, url.clone());
-        Ok(url)
+        Ok(Self::from_url(url))
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
