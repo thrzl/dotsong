@@ -320,10 +320,12 @@ impl AppState {
                         });
                         if matches!(activity_result, Err(DiscordError::NotStarted)) {
                             eprintln!("discord presence update failed; rpc not connected");
+                            break;
                         }
                     } else {
                         if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
                             eprintln!("discord presence update failed; rpc not connected");
+                            break;
                         };
                     }
                 }
