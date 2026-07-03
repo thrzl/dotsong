@@ -239,12 +239,11 @@ impl MediaCenter {
                             continue;
                         }
 
-                        let mut track = if snapshot.is_some() {
-                            Arc::unwrap_or_clone(snapshot.unwrap())
-                        } else {
+                        let Some(track) = snapshot else {
                             is_playing = false;
                             continue;
                         };
+                        let mut track = Arc::unwrap_or_clone(track);
                         track.elapsed_time = track.duration.map(|duration| duration / 2);
                         let track = Arc::new(track);
                         inner_self.last_track.store(Some(track.clone()));
