@@ -291,12 +291,13 @@ impl MediaCenter {
                         .await;
                     }
                     TrackUpdateEvent::PositionChanged(track) | TrackUpdateEvent::Tick(track) => {
+                        println!("scrobbling task received position change or tick event for track: {} - {}", track.title(), track.artist());
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }
                         if track.elapsed_time.unwrap() >= (track.duration.unwrap() / 2) {
                             let already_scrobbleed = if let Some(last_track) = &last_scrobble {
-                                Self::media_info_equal(last_scrobble.as_ref(), last_track)
+                                Self::media_info_equal(last_scrobble.as_ref(), &track)
                                     && (last_track.elapsed_time.unwrap()
                                         >= (last_track.duration.unwrap() / 2))
                             } else {
