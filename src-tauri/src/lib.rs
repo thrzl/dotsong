@@ -307,7 +307,9 @@ impl AppState {
                                             timestamps.start(
                                                 start_time
                                                     .duration_since(std::time::UNIX_EPOCH)
-                                                    .unwrap_or(std::time::Duration::from_secs(0))
+                                                    .unwrap_or_else(|_| {
+                                                        std::time::Duration::from_secs(0)
+                                                    })
                                                     .as_secs(),
                                             )
                                         }
