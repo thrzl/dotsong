@@ -3,6 +3,7 @@ mod source;
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
+use futures::FutureExt;
 use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -81,10 +82,7 @@ impl MediaCenter {
             (None, None) => true,
             _ => false,
         };
-        title_matches
-            && artist_matches
-            && previous.is_playing == current.is_playing
-            && current.elapsed_time.is_some_and(|d| d > 0)
+        title_matches && artist_matches && current.elapsed_time.is_some_and(|d| d > 0)
     }
 
     pub fn start_media_poller(self: Arc<Self>) {
@@ -126,18 +124,27 @@ impl MediaCenter {
 
             if is_playing != last_track_is_playing {
                 // if they are the same track, but the playback state changed, we still want to send an event
-                println!("playback state changed");
+                println!(
+                    "playback state changed: {} -> {}",
+                    last_track_is_playing, is_playing
+                );
                 self.track_tx
-                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(media_info)))
+                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
+                        media_info.clone(),
+                    )))
                     .ok();
                 self.play_state_notify.notify_one();
             } else {
                 // if they're the same track and the playback state didn't change, that means the position changed
                 println!("position changed");
                 self.track_tx
-                    .send(TrackUpdateEvent::PositionChanged(Arc::new(media_info)))
+                    .send(TrackUpdateEvent::PositionChanged(Arc::new(
+                        media_info.clone(),
+                    )))
                     .ok();
+                self.play_state_notify.notify_one();
             }
+            self.last_track.store(Some(Arc::new(media_info.clone())));
             return;
         }
         media_info.title = media_info
@@ -153,6 +160,11 @@ impl MediaCenter {
                 media_info
             }
         };
+        println!(
+            "new track: {} - {}",
+            media_info.title(),
+            media_info.artist()
+        );
         self.track_tx
             .send(TrackUpdateEvent::NewTrack(Arc::new(media_info.clone())))
             .and_then(|_| {
@@ -170,23 +182,43 @@ impl MediaCenter {
     }
 
     fn start_position_ticker(self: &Arc<Self>) {
+        println!("starting position ticker");
         let tx = self.track_tx.clone();
         let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
-        let tick = Duration::from_secs(5);
+        let tick = Duration::from_secs(10);
         let inner_self = self.clone();
 
         tauri::async_runtime::spawn(async move {
             let mut is_playing = false;
             loop {
                 if !is_playing {
+                    println!("not playing, waiting for play state change");
                     play_state.notified().await;
                     let last_track = inner_self.last_track.load();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
+                let tick_future = {
+                    let last_track = inner_self.last_track.load();
+                    // return the remaining time until the next tick, or 5 seconds if the track is longer than that
+                    last_track
+                        .as_ref()
+                        .map(|track| {
+                            let elapsed = track.elapsed_time.unwrap_or(0);
+                            let duration = track.duration.unwrap_or(0);
+                            let remaining = (duration / 2).saturating_sub(elapsed);
+                            println!("calculating next tick: elapsed = {}, duration = {}, remaining = {}", elapsed, duration, remaining);
+                            if remaining > 0 {
+                                tokio::time::sleep(Duration::from_secs(remaining as u64)).boxed()
+                            } else {
+                                futures::future::pending().boxed() // just wait forever if the track is over, since we don't want to send a tick for a finished track
+                            }
+                        })
+                        .unwrap_or(tokio::time::sleep(tick).boxed())
+                };
                 tokio::select! {
-                    _ = tokio::time::sleep(tick) => {
+                    _ = tick_future => {
                         let snapshot = inner_self.last_track.load_full();
                         let Some(base) = snapshot.as_ref() else {
                             is_playing = false;
@@ -209,7 +241,9 @@ impl MediaCenter {
                             continue;
                         };
                         track.elapsed_time = Some(effective);
-                        let _ = tx.send(TrackUpdateEvent::Tick(Arc::new(track)));
+                        let track = Arc::new(track);
+                        inner_self.last_track.store(Some(track.clone()));
+                        let _ = tx.send(TrackUpdateEvent::PositionChanged(track));
                     }
                     _ = play_state.notified() => {
                         elapsed_offset.store(0, Ordering::Relaxed);
@@ -255,12 +289,11 @@ impl MediaCenter {
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }
-                        if track.elapsed_time.unwrap() > (track.duration.unwrap() / 2) {
+                        if track.elapsed_time.unwrap() >= (track.duration.unwrap() / 2) {
                             let already_scrobbleed = if let Some(last_track) = &last_scrobble {
-                                last_track.title == track.title
-                                    && last_track.album == track.album
+                                Self::media_info_equal(last_scrobble.as_ref(), last_track)
                                     && (last_track.elapsed_time.unwrap()
-                                        > (last_track.duration.unwrap() / 2))
+                                        >= (last_track.duration.unwrap() / 2))
                             } else {
                                 false
                             };
