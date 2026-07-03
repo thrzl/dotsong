@@ -221,7 +221,6 @@ impl AppState {
         tauri::async_runtime::spawn(async move {
             loop {
                 let notify = Arc::new(tokio::sync::Notify::new());
-                let disconnect_notify = Arc::new(tokio::sync::Notify::new());
                 {
                     let mut guard = rpc.lock();
                     let rpc = guard.as_mut().unwrap();
@@ -274,12 +273,13 @@ impl AppState {
                                 .details(media_info.title())
                                 .assets(|assets| {
                                     let assets = assets.large_image(
-                                        media_info
-                                            .cover_artwork
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .url()
-                                            .unwrap_or("default"),
+                                        if let Some(cover_artwork) =
+                                            media_info.cover_artwork.as_ref()
+                                        {
+                                            cover_artwork.url().unwrap_or("default")
+                                        } else {
+                                            "default"
+                                        },
                                     );
                                     let album_name = media_info.album();
                                     if !album_name.is_empty() {
@@ -290,17 +290,26 @@ impl AppState {
                                 })
                                 .timestamps(|timestamps| {
                                     if let Some(elapsed_time) = media_info.elapsed_time {
-                                        let start_time = chrono::Utc::now()
-                                            - chrono::Duration::seconds(elapsed_time as i64);
+                                        let start_time = std::time::SystemTime::now()
+                                            - std::time::Duration::from_secs(elapsed_time as u64);
+                                        let start_time_secs = start_time
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs();
 
                                         if media_info.duration.is_some_and(|duration| duration > 0)
                                         {
-                                            timestamps.start(start_time.timestamp() as u64).end(
-                                                media_info.duration.unwrap() as u64
-                                                    + start_time.timestamp() as u64,
+                                            timestamps.start(start_time_secs).end(
+                                                start_time_secs
+                                                    + media_info.duration.unwrap() as u64,
                                             )
                                         } else {
-                                            timestamps.start(start_time.timestamp() as u64)
+                                            timestamps.start(
+                                                start_time
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .unwrap_or(std::time::Duration::from_secs(0))
+                                                    .as_secs(),
+                                            )
                                         }
                                     } else {
                                         timestamps
