@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
+use unicase::UniCase;
 
 pub static BROWSERS: &[&str] = &[
     "chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion",
@@ -66,8 +67,22 @@ impl MediaCenter {
         let Some(previous) = previous else {
             return false;
         };
-        previous.title == current.title
-            && previous.artist == current.artist
+        let title_matches = match (previous.title.as_ref(), current.title.as_ref()) {
+            (Some(prev_title), Some(curr_title)) => {
+                UniCase::new(prev_title) == UniCase::new(curr_title)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let artist_matches = match (previous.artist.as_ref(), current.artist.as_ref()) {
+            (Some(prev_artist), Some(curr_artist)) => {
+                UniCase::new(prev_artist) == UniCase::new(curr_artist)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        title_matches
+            && artist_matches
             && previous.is_playing == current.is_playing
             && current.elapsed_time.is_some_and(|d| d > 0)
     }
@@ -94,117 +109,64 @@ impl MediaCenter {
             println!("ignoring event [empty]");
             return;
         }
-        let mut useless_browser_track = false;
-        if media_info.is_browser() {
-            if !self.config.read().allow_browsers {
-                println!("ignoring event [browser]");
-                return;
-            }
-            // if any of the following is true, we're good to continue:
-            // 1. album is some and not empty
-            // 2. the artist ends with "- Topic"
-            if media_info.album.as_ref().is_none_or(|a| a.is_empty())
-                && !media_info
-                    .artist
-                    .as_ref()
-                    .is_some_and(|a| a.ends_with("- Topic"))
-            {
-                println!("ignoring event [browser topic]");
-                useless_browser_track = true;
-            }
-        }
-        media_info.artist = media_info
-            .artist
-            .as_ref()
-            .map(|t| t.trim_end_matches(" - Topic").to_string());
-
-        if !media_info.is_playing {
-            if let Some(track) = self.last_track.load().as_ref() {
-                if track.title == media_info.title && track.artist == media_info.artist {
-                    let mut paused = track.deref().clone();
-                    paused.is_playing = false;
-                    paused.elapsed_time = media_info.elapsed_time;
-                    let paused_arc = Arc::new(paused);
-                    self.last_track.store(Some(paused_arc.clone()));
-                    self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(paused_arc))
-                        .unwrap();
-                }
-            }
-        }
-
         let last_track = self.last_track.load_full();
-        let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
+        if Self::media_info_equal(last_track.as_deref(), &media_info) {
+            let last_track = last_track.unwrap();
 
-        let mut enriched = if same_track {
-            let mut cached = last_track.as_ref().unwrap().deref().clone();
-            cached.elapsed_time = media_info.elapsed_time;
-            cached.duration = media_info.duration;
-            cached.is_playing = media_info.is_playing;
-            cached
-        } else {
-            self.deezer_client
-                .enrich_media_info(&media_info)
-                .await
-                .unwrap_or(media_info.clone())
-        };
-        if useless_browser_track && enriched == media_info {
-            println!("ignoring event [useless browser track]");
+            // take last_track, since it's enriched, and just replace the possibly new info
+            // first, let's get the elapsed time and is_playing from the new media_info, since
+            // those are the only things that can change without changing the track
+            let elapsed_time = media_info.elapsed_time;
+            let is_playing = media_info.is_playing;
+            let last_track_is_playing = last_track.is_playing;
+
+            let mut media_info = Arc::unwrap_or_clone(last_track);
+            media_info.elapsed_time = elapsed_time;
+            media_info.is_playing = is_playing;
+
+            if is_playing != last_track_is_playing {
+                // if they are the same track, but the playback state changed, we still want to send an event
+                println!("playback state changed");
+                self.track_tx
+                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(media_info)))
+                    .ok();
+                self.play_state_notify.notify_one();
+            } else {
+                // if they're the same track and the playback state didn't change, that means the position changed
+                println!("position changed");
+                self.track_tx
+                    .send(TrackUpdateEvent::PositionChanged(Arc::new(media_info)))
+                    .ok();
+            }
             return;
         }
-
-        if !enriched
-            .cover_artwork
-            .as_ref()
-            .is_some_and(|c| c.url().is_some())
-        {
-            enriched.cover_artwork = match enriched.cover_artwork.take() {
-                Some(mut cover) if cover.bytes().is_some() => {
-                    if !self.config.read().upload_cover_artwork {
-                        None
-                    } else {
-                        match cover.upload_bytes().await {
-                            Ok(_) => {
-                                println!("uploaded cover artwork");
-                                Some(cover)
-                            }
-                            Err(e) => {
-                                println!("upload failed: {:?}", e);
-                                None
-                            }
-                        }
-                    }
+        media_info.title = media_info
+            .title
+            .map(|t| t.trim_end_matches(" - Topic").to_string());
+        let media_info = match self.deezer_client.enrich_media_info(&media_info).await {
+            Some(info) => info,
+            None => {
+                if media_info.is_browser() {
+                    println!("ignoring event [browser]");
+                    return;
                 }
-                _ => None,
-            };
-        }
-
-        let is_same = Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched);
-        let play_state_changed =
-            last_track.as_ref().map(|v| v.is_playing) != Some(enriched.is_playing);
-
-        if is_same {
-            if play_state_changed {
-                self.track_tx
-                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
-                        enriched.clone(),
-                    )))
-                    .unwrap();
-            } else {
-                self.track_tx
-                    .send(TrackUpdateEvent::PositionChanged(Arc::new(
-                        enriched.clone(),
-                    )))
-                    .unwrap();
+                media_info
             }
-        } else {
-            self.elapsed_offset.store(0, Ordering::Relaxed);
-            self.track_tx
-                .send(TrackUpdateEvent::NewTrack(Arc::new(enriched.clone())))
-                .unwrap();
-        }
-        self.last_track.store(Some(Arc::new(enriched)));
-        self.play_state_notify.notify_one();
+        };
+        self.track_tx
+            .send(TrackUpdateEvent::NewTrack(Arc::new(media_info.clone())))
+            .and_then(|_| {
+                // ONLY if the track send succeeds, cus if it doesn't we want to run it again:
+
+                // 1. save the last track
+                self.last_track.store(Some(Arc::new(media_info)));
+
+                // 2. reset the elapsed offset, since it's a new track
+                self.elapsed_offset.store(0, Ordering::Relaxed);
+                self.play_state_notify.notify_one();
+                Ok(())
+            })
+            .ok();
     }
 
     fn start_position_ticker(self: &Arc<Self>) {
