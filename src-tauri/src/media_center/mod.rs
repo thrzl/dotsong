@@ -10,7 +10,10 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
 
-pub static BROWSERS: &[&str] = &["chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion", "chromium"];
+pub static BROWSERS: &[&str] = &[
+    "chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion",
+    "chromium",
+];
 
 #[derive(Clone, Debug)]
 pub enum TrackUpdateEvent {
@@ -66,7 +69,7 @@ impl MediaCenter {
         previous.title == current.title
             && previous.artist == current.artist
             && previous.is_playing == current.is_playing
-            && current.elapsed_time.map(|d| d > 0).unwrap_or(false)
+            && current.elapsed_time.is_some_and(|d| d > 0)
     }
 
     pub fn start_media_poller(self: Arc<Self>) {
@@ -85,7 +88,9 @@ impl MediaCenter {
     }
 
     async fn process_event(self: &Arc<Self>, mut media_info: MediaInfo) {
-        if media_info.title.as_ref().is_none_or(|t| t.is_empty()) && media_info.artist.as_ref().is_none_or(|a| a.is_empty()) {
+        if media_info.title.as_ref().is_none_or(|t| t.is_empty())
+            && media_info.artist.as_ref().is_none_or(|a| a.is_empty())
+        {
             println!("ignoring event [empty]");
             return;
         }
@@ -93,19 +98,25 @@ impl MediaCenter {
         if media_info.is_browser() {
             if !self.config.read().allow_browsers {
                 println!("ignoring event [browser]");
-                return
+                return;
             }
             // if any of the following is true, we're good to continue:
             // 1. album is some and not empty
             // 2. the artist ends with "- Topic"
             if media_info.album.as_ref().is_none_or(|a| a.is_empty())
-                && !media_info.artist.as_ref().is_some_and(|a| a.ends_with("- Topic"))
+                && !media_info
+                    .artist
+                    .as_ref()
+                    .is_some_and(|a| a.ends_with("- Topic"))
             {
                 println!("ignoring event [browser topic]");
                 useless_browser_track = true;
             }
         }
-        media_info.artist = media_info.artist.as_ref().map(|t| t.trim_end_matches(" - Topic").to_string());
+        media_info.artist = media_info
+            .artist
+            .as_ref()
+            .map(|t| t.trim_end_matches(" - Topic").to_string());
 
         if !media_info.is_playing {
             if let Some(track) = self.last_track.load().as_ref() {
