@@ -229,28 +229,24 @@ impl MediaCenter {
                 };
                 tokio::select! {
                     _ = tick_future => {
-                        let snapshot = inner_self.last_track.load_full();
-                        let Some(base) = snapshot.as_ref() else {
+                        let snapshot = inner_self.last_track.load();
+                        let Some(track) = snapshot.as_ref() else {
                             is_playing = false;
                             continue;
                         };
-                        if !base.is_playing {
+                        if !track.is_playing {
                             is_playing = false;
                             continue;
                         }
 
-                        let Some(track) = snapshot else {
-                            is_playing = false;
-                            continue;
-                        };
-                        let mut track = Arc::unwrap_or_clone(track);
+                        let mut track = Arc::unwrap_or_clone(track.clone());
                         track.elapsed_time = track.duration.map(|duration| duration / 2);
                         let track = Arc::new(track);
                         inner_self.last_track.store(Some(track.clone()));
                         let _ = tx.send(TrackUpdateEvent::Tick(track));
                     }
                     _ = play_state.notified() => {
-                        is_playing = inner_self.last_track.load_full()
+                        is_playing = inner_self.last_track.load().as_ref()
                             .is_some_and(|t| t.is_playing);
                     }
                 }
