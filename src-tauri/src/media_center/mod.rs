@@ -6,7 +6,6 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use futures::FutureExt;
 use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
@@ -28,7 +27,6 @@ pub enum TrackUpdateEvent {
 
 pub struct MediaCenter {
     last_track: ArcSwapOption<MediaInfo>,
-    elapsed_offset: Arc<AtomicU32>,
     track_tx: watch::Sender<TrackUpdateEvent>,
     scrobblers: ArcSwap<Vec<Scrobbler>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
@@ -49,7 +47,6 @@ impl MediaCenter {
         )));
         MediaCenter {
             last_track: ArcSwapOption::from(None),
-            elapsed_offset: Arc::new(AtomicU32::new(0)),
             track_tx: tx,
             scrobblers: ArcSwap::new(Arc::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
@@ -172,9 +169,6 @@ impl MediaCenter {
 
                 // 1. save the last track
                 self.last_track.store(Some(Arc::new(media_info)));
-
-                // 2. reset the elapsed offset, since it's a new track
-                self.elapsed_offset.store(0, Ordering::Relaxed);
                 self.play_state_notify.notify_one();
                 Ok(())
             })
@@ -184,7 +178,6 @@ impl MediaCenter {
     fn start_position_ticker(self: &Arc<Self>) {
         println!("starting position ticker");
         let tx = self.track_tx.clone();
-        let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
         let tick = Duration::from_secs(10);
         let inner_self = self.clone();
@@ -229,24 +222,18 @@ impl MediaCenter {
                             continue;
                         }
 
-                        elapsed_offset.fetch_add(tick.as_secs() as u32, Ordering::Relaxed);
-                        let offset = elapsed_offset.load(Ordering::Relaxed);
-                        let base_elapsed = base.elapsed_time.unwrap_or(0);
-                        let effective = base_elapsed.saturating_add(offset);
-
                         let mut track = if snapshot.is_some() {
                             Arc::unwrap_or_clone(snapshot.unwrap())
                         } else {
                             is_playing = false;
                             continue;
                         };
-                        track.elapsed_time = Some(effective);
+                        track.elapsed_time = track.duration.map(|duration| duration / 2);
                         let track = Arc::new(track);
                         inner_self.last_track.store(Some(track.clone()));
-                        let _ = tx.send(TrackUpdateEvent::PositionChanged(track));
+                        let _ = tx.send(TrackUpdateEvent::Tick(track));
                     }
                     _ = play_state.notified() => {
-                        elapsed_offset.store(0, Ordering::Relaxed);
                         is_playing = inner_self.last_track.load_full()
                             .is_some_and(|t| t.is_playing);
                     }
