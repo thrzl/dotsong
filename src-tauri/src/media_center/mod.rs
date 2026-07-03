@@ -146,9 +146,9 @@ impl MediaCenter {
             self.last_track.store(Some(media_info));
             return;
         }
-        media_info.title = media_info
-            .title
-            .map(|t| t.trim_end_matches(" - Topic").to_string());
+        media_info.artist = media_info
+            .artist
+            .map(|t| t.strip_suffix(" - Topic").unwrap_or(&t).to_string());
         let mut media_info = match self.deezer_client.enrich_media_info(&media_info).await {
             Some(info) => info,
             None => {
