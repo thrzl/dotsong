@@ -104,6 +104,10 @@ impl MediaCenter {
             println!("ignoring event [empty]");
             return;
         }
+        if media_info.is_browser() && !self.config.read().allow_browsers {
+            println!("ignoring event [browsers disabled]");
+            return;
+        }
         let last_track = self.last_track.load_full();
         if Self::media_info_equal(last_track.as_deref(), &media_info) {
             let last_track = last_track.unwrap();
@@ -151,7 +155,7 @@ impl MediaCenter {
             Some(info) => info,
             None => {
                 if media_info.is_browser() {
-                    println!("ignoring event [browser]");
+                    println!("ignoring unmatched event [browser]");
                     return;
                 }
                 media_info
