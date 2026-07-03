@@ -1,14 +1,13 @@
 use crate::{http, media_center::BROWSERS};
 use bytes::Bytes;
 use image::DynamicImage;
-use moka::future::Cache;
+use mini_moka::sync::Cache;
 use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
 
 static LITTERBOX_CACHE: LazyLock<Cache<u64, String>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(100)
-        .eviction_policy(moka::policy::EvictionPolicy::tiny_lfu())
         .time_to_live(std::time::Duration::from_hours(1))
         .build()
 });
@@ -84,7 +83,7 @@ impl CoverArtwork {
     pub async fn upload_bytes(&mut self) -> Result<String, reqwest::Error> {
         let bytes = self.data.clone().unwrap_or_else(|| Bytes::new());
         let hash = xxh3_64(&bytes);
-        if let Some(cached_url) = LITTERBOX_CACHE.get(&hash).await {
+        if let Some(cached_url) = LITTERBOX_CACHE.get(&hash) {
             println!("already uploaded image {:016x}, cache hit", hash);
             self.url = Some(cached_url.clone());
             return Ok(cached_url);
@@ -109,7 +108,7 @@ impl CoverArtwork {
 
         let url = res.text().await?;
         self.url = Some(url.clone());
-        LITTERBOX_CACHE.insert(hash, url.clone()).await;
+        LITTERBOX_CACHE.insert(hash, url.clone());
         Ok(url)
     }
 
