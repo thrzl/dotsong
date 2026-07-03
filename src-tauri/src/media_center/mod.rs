@@ -1,7 +1,7 @@
 mod source;
 
 use crate::config::Scrobbler;
-use crate::models::{self, MediaInfo};
+use crate::models::{self, CoverArtwork, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use futures::FutureExt;
 use parking_lot::{Mutex, RwLock};
@@ -147,7 +147,7 @@ impl MediaCenter {
         media_info.title = media_info
             .title
             .map(|t| t.trim_end_matches(" - Topic").to_string());
-        let media_info = match self.deezer_client.enrich_media_info(&media_info).await {
+        let mut media_info = match self.deezer_client.enrich_media_info(&media_info).await {
             Some(info) => info,
             None => {
                 if media_info.is_browser() {
@@ -162,13 +162,28 @@ impl MediaCenter {
             media_info.title(),
             media_info.artist()
         );
+        // upload cover artwork to litterbox if its not there
+        if let Some(cover_artwork) = media_info.cover_artwork.as_mut() {
+            if cover_artwork.url().is_none() && cover_artwork.bytes().is_some() {
+                match cover_artwork.upload_bytes().await {
+                    Ok(url) => {
+                        println!("uploaded cover artwork to litterbox: {}", url);
+                        media_info.cover_artwork = Some(CoverArtwork::from_url(url.clone()));
+                    }
+                    Err(e) => {
+                        println!("failed to upload cover artwork to litterbox: {}", e);
+                    }
+                }
+            }
+        }
+        let media_info = Arc::new(media_info);
         self.track_tx
-            .send(TrackUpdateEvent::NewTrack(Arc::new(media_info.clone())))
+            .send(TrackUpdateEvent::NewTrack(media_info.clone()))
             .and_then(|_| {
                 // ONLY if the track send succeeds, cus if it doesn't we want to run it again:
 
                 // 1. save the last track
-                self.last_track.store(Some(Arc::new(media_info)));
+                self.last_track.store(Some(media_info));
                 self.play_state_notify.notify_one();
                 Ok(())
             })
