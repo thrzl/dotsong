@@ -1,6 +1,6 @@
 use crate::{http, media_center::BROWSERS};
 use bytes::Bytes;
-use image::{DynamicImage, GenericImageView};
+use image::DynamicImage;
 use moka::future::Cache;
 use std::sync::LazyLock;
 use xxhash::xxh3_64;
