@@ -30,7 +30,6 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 tauri-plugin-single-instance = "2.4.2"
 tauri-plugin-autostart = "2.5.1"
-tray-icon = "0.24.1"
 discord-presence = "3.2.0"
 tokio = { version = "1", features = ["sync", "time"] }
 reqwest = { version = "0.13.4", features = ["json", "multipart"] }
