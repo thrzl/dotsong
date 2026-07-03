@@ -166,7 +166,10 @@ impl MediaCenter {
         );
         // upload cover artwork to litterbox if its not there
         if let Some(cover_artwork) = &media_info.cover_artwork {
-            if cover_artwork.url().is_none() && cover_artwork.bytes().is_some() {
+            if self.config.read().upload_cover_artwork
+                && cover_artwork.url().is_none()
+                && cover_artwork.bytes().is_some()
+            {
                 match cover_artwork.into_uploaded().await {
                     Ok(uploaded_artwork) => {
                         println!(
