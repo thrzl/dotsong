@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use futures::StreamExt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+use log::warn;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use nowhear::MediaSource;
 
 use crate::models::{CoverArtwork, MediaInfo};
