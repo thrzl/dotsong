@@ -1,3 +1,4 @@
+use log::debug;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
@@ -66,7 +67,7 @@ impl MacMediaSource {
             // The media-remote callback runs on its own thread, so we can't
             // `.await` here. `try_send` is sync and drops on a full channel;
             // events come fast enough that the next one will catch us up.
-            println!("broadcasting new event (macOS)");
+            debug!("broadcasting new event (macOS)");
             tauri::async_runtime::spawn(async move {
                 tx.send(media_info).await.unwrap();
             });
@@ -82,7 +83,7 @@ impl MacMediaSource {
 #[async_trait::async_trait]
 impl OsMediaSource for MacMediaSource {
     async fn next_event(&self) -> Option<MediaInfo> {
-        println!("waiting for next event");
+        debug!("waiting for next event");
         let mut rx = self.rx.lock().await;
         rx.recv().await
     }
@@ -113,7 +114,7 @@ impl OsMediaSource for NowHearSource {
             match nowhear::MediaSourceBuilder::new().build().await {
                 Ok(s) => *source_guard = Some(s),
                 Err(e) => {
-                    eprintln!("failed to build nowhear media source: {e}");
+                    warn!("failed to build nowhear media source: {e}");
                     return None;
                 }
             }
@@ -125,7 +126,7 @@ impl OsMediaSource for NowHearSource {
             match source.event_stream().await {
                 Ok(s) => *stream_guard = Some(s),
                 Err(e) => {
-                    eprintln!("failed to open nowhear event stream: {e}");
+                    warn!("failed to open nowhear event stream: {e}");
                     return None;
                 }
             }

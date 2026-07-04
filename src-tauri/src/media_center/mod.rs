@@ -3,12 +3,14 @@ mod source;
 use crate::config::Scrobbler;
 use crate::models::{self, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
+use futures::FutureExt;
+use log::{debug, info, warn};
 use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::{sync::Notify, time::Duration};
+use unicase::UniCase;
 
 pub static BROWSERS: &[&str] = &[
     "chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion",
@@ -26,7 +28,6 @@ pub enum TrackUpdateEvent {
 
 pub struct MediaCenter {
     last_track: ArcSwapOption<MediaInfo>,
-    elapsed_offset: Arc<AtomicU32>,
     track_tx: watch::Sender<TrackUpdateEvent>,
     scrobblers: ArcSwap<Vec<Scrobbler>>,
     scrobbling_task_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
@@ -47,7 +48,6 @@ impl MediaCenter {
         )));
         MediaCenter {
             last_track: ArcSwapOption::from(None),
-            elapsed_offset: Arc::new(AtomicU32::new(0)),
             track_tx: tx,
             scrobblers: ArcSwap::new(Arc::new(scrobblers)),
             scrobbling_task_handle: Arc::new(Mutex::new(None)),
@@ -66,14 +66,25 @@ impl MediaCenter {
         let Some(previous) = previous else {
             return false;
         };
-        previous.title == current.title
-            && previous.artist == current.artist
-            && previous.is_playing == current.is_playing
-            && current.elapsed_time.is_some_and(|d| d > 0)
+        let title_matches = match (previous.title.as_ref(), current.title.as_ref()) {
+            (Some(prev_title), Some(curr_title)) => {
+                UniCase::new(prev_title) == UniCase::new(curr_title)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let artist_matches = match (previous.artist.as_ref(), current.artist.as_ref()) {
+            (Some(prev_artist), Some(curr_artist)) => {
+                UniCase::new(prev_artist) == UniCase::new(curr_artist)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        title_matches && artist_matches && current.elapsed_time.is_some_and(|d| d > 0)
     }
 
     pub fn start_media_poller(self: Arc<Self>) {
-        println!("starting media poller");
+        info!("starting media poller");
         let media_source = self.media_source.clone();
         let inner_self = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -91,167 +102,158 @@ impl MediaCenter {
         if media_info.title.as_ref().is_none_or(|t| t.is_empty())
             && media_info.artist.as_ref().is_none_or(|a| a.is_empty())
         {
-            println!("ignoring event [empty]");
+            debug!("ignoring event [empty]");
             return;
         }
-        let mut useless_browser_track = false;
-        if media_info.is_browser() {
-            if !self.config.read().allow_browsers {
-                println!("ignoring event [browser]");
-                return;
+        if media_info.is_browser() && !self.config.read().allow_browsers {
+            debug!("ignoring event [browsers disabled]");
+            return;
+        }
+        let last_track = self.last_track.load_full();
+        if Self::media_info_equal(last_track.as_deref(), &media_info) {
+            let last_track = last_track.unwrap();
+
+            // take last_track, since it's enriched, and just replace the possibly new info
+            // first, let's get the elapsed time and is_playing from the new media_info, since
+            // those are the only things that can change without changing the track
+            let elapsed_time = media_info.elapsed_time;
+            let is_playing = media_info.is_playing;
+            let last_track_is_playing = last_track.is_playing;
+
+            let mut media_info = Arc::unwrap_or_clone(last_track);
+            media_info.elapsed_time = elapsed_time;
+            media_info.is_playing = is_playing;
+
+            let media_info = Arc::new(media_info);
+
+            if is_playing != last_track_is_playing {
+                // if they are the same track, but the playback state changed, we still want to send an event
+                debug!(
+                    "playback state changed: {} -> {}",
+                    last_track_is_playing, is_playing
+                );
+                self.track_tx
+                    .send(TrackUpdateEvent::PlaybackStateChange(media_info.clone()))
+                    .ok();
+                self.play_state_notify.notify_one();
+            } else {
+                // if they're the same track and the playback state didn't change, that means the position changed
+                debug!("position changed");
+                self.track_tx
+                    .send(TrackUpdateEvent::PositionChanged(media_info.clone()))
+                    .ok();
+                self.play_state_notify.notify_one();
             }
-            // if any of the following is true, we're good to continue:
-            // 1. album is some and not empty
-            // 2. the artist ends with "- Topic"
-            if media_info.album.as_ref().is_none_or(|a| a.is_empty())
-                && !media_info
-                    .artist
-                    .as_ref()
-                    .is_some_and(|a| a.ends_with("- Topic"))
-            {
-                println!("ignoring event [browser topic]");
-                useless_browser_track = true;
-            }
+            self.last_track.store(Some(media_info));
+            return;
         }
         media_info.artist = media_info
             .artist
-            .as_ref()
-            .map(|t| t.trim_end_matches(" - Topic").to_string());
-
-        if !media_info.is_playing {
-            if let Some(track) = self.last_track.load().as_ref() {
-                if track.title == media_info.title && track.artist == media_info.artist {
-                    let mut paused = track.deref().clone();
-                    paused.is_playing = false;
-                    paused.elapsed_time = media_info.elapsed_time;
-                    let paused_arc = Arc::new(paused);
-                    self.last_track.store(Some(paused_arc.clone()));
-                    self.track_tx
-                        .send(TrackUpdateEvent::PlaybackStateChange(paused_arc))
-                        .unwrap();
+            .map(|t| t.strip_suffix(" - Topic").unwrap_or(&t).to_string());
+        let mut media_info = match self.deezer_client.enrich_media_info(&media_info).await {
+            Some(info) => info,
+            None => {
+                if media_info.is_browser() {
+                    debug!("ignoring unmatched event [browser]");
+                    return;
                 }
+                media_info
             }
-        }
-
-        let last_track = self.last_track.load_full();
-        let same_track = Self::media_info_equal(last_track.as_deref(), &media_info);
-
-        let mut enriched = if same_track {
-            let mut cached = last_track.as_ref().unwrap().deref().clone();
-            cached.elapsed_time = media_info.elapsed_time;
-            cached.duration = media_info.duration;
-            cached.is_playing = media_info.is_playing;
-            cached
-        } else {
-            self.deezer_client
-                .enrich_media_info(&media_info)
-                .await
-                .unwrap_or(media_info.clone())
         };
-        if useless_browser_track && enriched == media_info {
-            println!("ignoring event [useless browser track]");
-            return;
-        }
-
-        if !enriched
-            .cover_artwork
-            .as_ref()
-            .is_some_and(|c| c.url().is_some())
-        {
-            enriched.cover_artwork = match enriched.cover_artwork.take() {
-                Some(mut cover) if cover.bytes().is_some() => {
-                    if !self.config.read().upload_cover_artwork {
-                        None
-                    } else {
-                        match cover.upload_bytes().await {
-                            Ok(_) => {
-                                println!("uploaded cover artwork");
-                                Some(cover)
-                            }
-                            Err(e) => {
-                                println!("upload failed: {:?}", e);
-                                None
-                            }
-                        }
+        info!(
+            "new track: {} - {}",
+            media_info.title(),
+            media_info.artist()
+        );
+        // upload cover artwork to litterbox if its not there
+        if let Some(cover_artwork) = &media_info.cover_artwork {
+            if self.config.read().upload_cover_artwork
+                && cover_artwork.url().is_none()
+                && cover_artwork.bytes().is_some()
+            {
+                match cover_artwork.into_uploaded().await {
+                    Ok(uploaded_artwork) => {
+                        info!(
+                            "uploaded cover artwork to litterbox: {}",
+                            uploaded_artwork.url().unwrap_or_else(|| "unknown".into())
+                        );
+                        media_info.cover_artwork = Some(uploaded_artwork);
+                    }
+                    Err(e) => {
+                        warn!("failed to upload cover artwork to litterbox: {}", e);
                     }
                 }
-                _ => None,
-            };
-        }
-
-        let is_same = Self::media_info_equal(last_track.as_ref().map(|v| &**v), &enriched);
-        let play_state_changed =
-            last_track.as_ref().map(|v| v.is_playing) != Some(enriched.is_playing);
-
-        if is_same {
-            if play_state_changed {
-                self.track_tx
-                    .send(TrackUpdateEvent::PlaybackStateChange(Arc::new(
-                        enriched.clone(),
-                    )))
-                    .unwrap();
-            } else {
-                self.track_tx
-                    .send(TrackUpdateEvent::PositionChanged(Arc::new(
-                        enriched.clone(),
-                    )))
-                    .unwrap();
             }
-        } else {
-            self.elapsed_offset.store(0, Ordering::Relaxed);
-            self.track_tx
-                .send(TrackUpdateEvent::NewTrack(Arc::new(enriched.clone())))
-                .unwrap();
         }
-        self.last_track.store(Some(Arc::new(enriched)));
-        self.play_state_notify.notify_one();
+        let media_info = Arc::new(media_info);
+        self.track_tx
+            .send(TrackUpdateEvent::NewTrack(media_info.clone()))
+            .and_then(|_| {
+                // ONLY if the track send succeeds, cus if it doesn't we want to run it again:
+
+                // 1. save the last track
+                self.last_track.store(Some(media_info));
+                self.play_state_notify.notify_one();
+                Ok(())
+            })
+            .ok();
     }
 
     fn start_position_ticker(self: &Arc<Self>) {
+        info!("starting position ticker");
         let tx = self.track_tx.clone();
-        let elapsed_offset = self.elapsed_offset.clone();
         let play_state = self.play_state_notify.clone();
-        let tick = Duration::from_secs(5);
+        let tick = Duration::from_secs(10);
         let inner_self = self.clone();
 
         tauri::async_runtime::spawn(async move {
             let mut is_playing = false;
             loop {
                 if !is_playing {
+                    debug!("not playing, waiting for play state change");
                     play_state.notified().await;
                     let last_track = inner_self.last_track.load();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
                     continue;
                 }
+                let tick_future = {
+                    let last_track = inner_self.last_track.load();
+                    // return the remaining time until the next tick, or 5 seconds if the track is longer than that
+                    last_track
+                        .as_ref()
+                        .map(|track| {
+                            let elapsed = track.elapsed_time.unwrap_or(0);
+                            let duration = track.duration.unwrap_or(0);
+                            let remaining = (duration / 2).saturating_sub(elapsed);
+                            debug!("calculating next tick: elapsed = {}, duration = {}, remaining = {}", elapsed, duration, remaining);
+                            if remaining > 0 {
+                                tokio::time::sleep(Duration::from_secs(remaining as u64)).boxed()
+                            } else {
+                                futures::future::pending().boxed() // just wait forever if the track is over, since we don't want to send a tick for a finished track
+                            }
+                        })
+                        .unwrap_or_else(|| tokio::time::sleep(tick).boxed())
+                };
                 tokio::select! {
-                    _ = tokio::time::sleep(tick) => {
-                        let snapshot = inner_self.last_track.load_full();
-                        let Some(base) = snapshot.as_ref() else {
+                    _ = tick_future => {
+                        let snapshot = inner_self.last_track.load();
+                        let Some(track) = snapshot.as_ref() else {
                             is_playing = false;
                             continue;
                         };
-                        if !base.is_playing {
+                        if !track.is_playing {
                             is_playing = false;
                             continue;
                         }
 
-                        elapsed_offset.fetch_add(tick.as_secs() as u32, Ordering::Relaxed);
-                        let offset = elapsed_offset.load(Ordering::Relaxed);
-                        let base_elapsed = base.elapsed_time.unwrap_or(0);
-                        let effective = base_elapsed.saturating_add(offset);
-
-                        let mut track = if snapshot.is_some() {
-                            Arc::unwrap_or_clone(snapshot.unwrap())
-                        } else {
-                            is_playing = false;
-                            continue;
-                        };
-                        track.elapsed_time = Some(effective);
-                        let _ = tx.send(TrackUpdateEvent::Tick(Arc::new(track)));
+                        let mut track = Arc::unwrap_or_clone(track.clone());
+                        track.elapsed_time = track.duration.map(|duration| duration / 2);
+                        let track = Arc::new(track);
+                        inner_self.last_track.store(Some(track.clone()));
+                        let _ = tx.send(TrackUpdateEvent::Tick(track));
                     }
                     _ = play_state.notified() => {
-                        elapsed_offset.store(0, Ordering::Relaxed);
-                        is_playing = inner_self.last_track.load_full()
+                        is_playing = inner_self.last_track.load().as_ref()
                             .is_some_and(|t| t.is_playing);
                     }
                 }
@@ -260,14 +262,14 @@ impl MediaCenter {
     }
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
-        println!("starting scrobbling task");
+        info!("starting scrobbling task");
         let scrobblers = self.scrobblers.load_full();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
         if let Some(task_handle) = task_guard.take() {
             task_handle.abort();
         };
-        println!(
+        info!(
             "spawning scrobbling task with {} scrobblers",
             scrobblers.len()
         );
@@ -290,15 +292,15 @@ impl MediaCenter {
                         .await;
                     }
                     TrackUpdateEvent::PositionChanged(track) | TrackUpdateEvent::Tick(track) => {
+                        debug!("scrobbling task received position change or tick event for track: {} - {}", track.title(), track.artist());
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }
-                        if track.elapsed_time.unwrap() > (track.duration.unwrap() / 2) {
+                        if track.elapsed_time.unwrap() >= (track.duration.unwrap() / 2) {
                             let already_scrobbleed = if let Some(last_track) = &last_scrobble {
-                                last_track.title == track.title
-                                    && last_track.album == track.album
+                                Self::media_info_equal(last_scrobble.as_ref(), &track)
                                     && (last_track.elapsed_time.unwrap()
-                                        > (last_track.duration.unwrap() / 2))
+                                        >= (last_track.duration.unwrap() / 2))
                             } else {
                                 false
                             };

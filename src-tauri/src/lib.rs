@@ -5,7 +5,7 @@ mod media_center;
 mod models;
 
 use discord_presence::DiscordError;
-use last_fm_rs::ScrobbleResponse;
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
@@ -16,10 +16,7 @@ use media_center::{MediaCenter, TrackUpdateEvent};
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{Menu, MenuItem};
 use tauri::Manager;
-use tauri::State;
 use tauri_plugin_opener::OpenerExt;
-
-use crate::models::CoverArtwork;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -86,13 +83,6 @@ struct UpdateInfo {
     available: bool,
 }
 
-fn parse_version(s: &str) -> Vec<u64> {
-    s.trim_start_matches('v')
-        .split('.')
-        .filter_map(|p| p.parse().ok())
-        .collect()
-}
-
 #[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
@@ -146,13 +136,13 @@ async fn save_config(
             *task_lock = Some(state.start_discord_presence());
         }
     } else {
-        println!("stopping discord presence");
+        info!("stopping discord presence");
         state.stop_discord_presence();
     }
     let config_path = &state.config_path;
     let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
     state.media_center.set_scrobblers(config.scrobblers.clone());
-    println!("writing config");
+    info!("writing config");
     tokio::fs::write(config_path, config_str)
         .await
         .map_err(|e| format!("failed to write config file: {e}"))
@@ -181,7 +171,7 @@ impl AppState {
             let _ = rpc.clear_activity();
             let _ = rpc.shutdown();
         } else {
-            println!("no rpc client to shutdown");
+            debug!("no rpc client to shutdown");
         }
     }
     fn start_tray_updater(&self) {
@@ -221,14 +211,13 @@ impl AppState {
         tauri::async_runtime::spawn(async move {
             loop {
                 let notify = Arc::new(tokio::sync::Notify::new());
-                let disconnect_notify = Arc::new(tokio::sync::Notify::new());
                 {
                     let mut guard = rpc.lock();
                     let rpc = guard.as_mut().unwrap();
                     let handler_notify = notify.clone();
                     let _ = rpc
                         .on_ready(move |_client| {
-                            println!("discord RPC connected");
+                            info!("discord RPC connected");
                             handler_notify.notify_one();
                         })
                         .persist();
@@ -241,7 +230,7 @@ impl AppState {
                             break;
                         }
                         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-                            eprintln!("discord rpc not connected yet, retrying...");
+                            warn!("discord rpc not connected yet, retrying...");
                             rpc.lock().as_mut().unwrap().start();
                         }
 
@@ -262,7 +251,7 @@ impl AppState {
                     };
                     if !media_info.is_playing {
                         if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
                         };
                         continue;
                     }
@@ -274,12 +263,13 @@ impl AppState {
                                 .details(media_info.title())
                                 .assets(|assets| {
                                     let assets = assets.large_image(
-                                        media_info
-                                            .cover_artwork
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .url()
-                                            .unwrap_or("default"),
+                                        if let Some(cover_artwork) =
+                                            media_info.cover_artwork.as_ref()
+                                        {
+                                            cover_artwork.url().unwrap_or("default")
+                                        } else {
+                                            "default"
+                                        },
                                     );
                                     let album_name = media_info.album();
                                     if !album_name.is_empty() {
@@ -290,17 +280,28 @@ impl AppState {
                                 })
                                 .timestamps(|timestamps| {
                                     if let Some(elapsed_time) = media_info.elapsed_time {
-                                        let start_time = chrono::Utc::now()
-                                            - chrono::Duration::seconds(elapsed_time as i64);
+                                        let start_time = std::time::SystemTime::now()
+                                            - std::time::Duration::from_secs(elapsed_time as u64);
+                                        let start_time_secs = start_time
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs();
 
                                         if media_info.duration.is_some_and(|duration| duration > 0)
                                         {
-                                            timestamps.start(start_time.timestamp() as u64).end(
-                                                media_info.duration.unwrap() as u64
-                                                    + start_time.timestamp() as u64,
+                                            timestamps.start(start_time_secs).end(
+                                                start_time_secs
+                                                    + media_info.duration.unwrap() as u64,
                                             )
                                         } else {
-                                            timestamps.start(start_time.timestamp() as u64)
+                                            timestamps.start(
+                                                start_time
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .unwrap_or_else(|_| {
+                                                        std::time::Duration::from_secs(0)
+                                                    })
+                                                    .as_secs(),
+                                            )
                                         }
                                     } else {
                                         timestamps
@@ -308,11 +309,13 @@ impl AppState {
                                 })
                         });
                         if matches!(activity_result, Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
+                            break;
                         }
                     } else {
                         if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
+                            break;
                         };
                     }
                 }
@@ -323,6 +326,7 @@ impl AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let program = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {})) // we don't gotta do anything just don't reopen

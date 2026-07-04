@@ -1,37 +1,43 @@
 use crate::http;
 use crate::models;
 use crate::models::CoverArtwork;
+use log::{debug, warn};
 use mini_moka::sync::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
+use serde::Deserialize;
 use std::sync::LazyLock;
+use unicase::UniCase;
 
 static CLEAN_TITLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(?(feat\.|ft\.)\s.+\)?").unwrap());
 
-#[derive(Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct DeezerAlbum {
     pub id: u64,
     pub title: String,
-    pub cover_artwork: Option<String>, // this is cover_big from the API
+    pub cover_big: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct DeezerArtist {
     pub id: u64,
     pub name: String,
-    pub picture: Option<String>, // this is picture_medium from the API
 }
 
-#[derive(Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct DeezerTrack {
     pub id: u64,
     pub title: String,
     pub album: DeezerAlbum,
-    pub artist: String,
-    pub cover_artwork: Option<String>,
+    pub artist: DeezerArtist,
     pub isrc: Option<String>,
     pub duration: u64, // duration in seconds! important!
+}
+
+#[derive(Deserialize)]
+pub struct DeezerSearchResponse {
+    pub data: Vec<DeezerTrack>,
 }
 
 pub struct DeezerClient {
@@ -50,10 +56,8 @@ impl DeezerClient {
         track: &models::MediaInfo,
         apple_music: bool,
     ) -> Option<DeezerTrack> {
-        let clean_title = CLEAN_TITLE_RE
-            .replace_all(track.title(), "")
-            .trim()
-            .to_string();
+        let clean_title = CLEAN_TITLE_RE.replace_all(track.title(), "");
+        let clean_title = clean_title.trim();
         let query = utf8_percent_encode(
             &format!(
                 "{} {} {}",
@@ -70,13 +74,24 @@ impl DeezerClient {
         let url = format!("https://api.deezer.com/search?q={}", query);
         let response = http::client().get(url).send().await.ok()?;
         if !response.status().is_success() {
+            warn!(
+                "deezer track search failed for query: {} with status: {}",
+                query,
+                response.status()
+            );
             return None;
         }
-        let response_json: serde_json::Value = response.json().await.ok()?;
-        let found_tracks = match response_json["data"].as_array() {
-            Some(arr) => arr,
-            None => return None,
+        let response_json: DeezerSearchResponse = response.json().await.ok()?;
+        let found_tracks = if response_json.data.len() > 0 {
+            response_json.data
+        } else {
+            debug!(
+                "deezer track search returned no results for query: {}",
+                query
+            );
+            return None;
         };
+
         let track_info = if apple_music {
             found_tracks.iter().find(|t| {
                 // if it's apple music, the album title is in the artist field, so we need to check if the track artist contains the album title instead
@@ -86,18 +101,14 @@ impl DeezerClient {
                 }
                 artist
                     .to_lowercase()
-                    .contains(&t["album"]["title"].as_str().unwrap().to_lowercase())
+                    .contains(&t.album.title.to_lowercase())
             })
         } else {
-            let mut tracks = found_tracks.iter().filter(|t| {
-                let title_matches = t["title"]
-                    .as_str()
-                    .map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
-                    == clean_title.to_lowercase().into();
-                let deezer_artist = t["artist"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_lowercase();
+            let mut tracks = found_tracks.iter().filter(|found_track| {
+                let title_matches =
+                    UniCase::new(CLEAN_TITLE_RE.replace(&found_track.title, "").trim())
+                        == UniCase::new(&clean_title);
+                let deezer_artist = found_track.artist.name.to_lowercase();
                 let track_artist = track.artist().to_lowercase();
                 let artist_matches =
                     deezer_artist.contains(&track_artist) || track_artist.contains(&deezer_artist);
@@ -105,37 +116,32 @@ impl DeezerClient {
             });
             let final_track = if track.album.as_ref().is_some_and(|a| !a.is_empty()) {
                 tracks.find(|t| {
-                    t["album"]["title"]
-                        .as_str()
-                        .map(|s| CLEAN_TITLE_RE.replace_all(s, "").trim().to_lowercase())
-                        == track.album().to_lowercase().into()
+                    UniCase::new(&t.album.title) == UniCase::new(track.album().to_lowercase())
                 })
             } else {
-                println!("deezer track search: no album info, returning first match");
+                debug!("deezer track search: no album info, returning first match");
                 tracks.into_iter().next()
             };
             final_track
         };
-        println!(
+        debug!(
             "deezer track search for query: {} found: {:?}",
             query, track_info
         );
         let track = Some(DeezerTrack {
-            id: track_info?["id"].as_u64()?,
-            title: track_info?["title"].as_str()?.to_string(),
-            isrc: track_info?["isrc"].as_str().map(|s| s.to_string()),
+            id: track_info?.id,
+            title: track_info?.title.clone(),
+            isrc: track_info?.isrc.clone(),
             album: DeezerAlbum {
-                id: track_info?["album"]["id"].as_u64()?,
-                title: track_info?["album"]["title"].as_str()?.to_string(),
-                cover_artwork: track_info?["album"]["cover_big"]
-                    .as_str()
-                    .map(|s| s.to_string()),
+                id: track_info?.album.id,
+                title: track_info?.album.title.clone(),
+                cover_big: track_info?.album.cover_big.clone(),
             },
-            artist: track_info?["artist"]["name"].as_str()?.to_string(),
-            cover_artwork: track_info?["album"]["cover"]
-                .as_str()
-                .map(|s| s.to_string()),
-            duration: track_info?["duration"].as_u64().unwrap_or(0),
+            artist: DeezerArtist {
+                id: track_info?.artist.id,
+                name: track_info?.artist.name.clone(),
+            },
+            duration: track_info?.duration,
         });
         self.cache.insert(query, track.clone().unwrap());
         track
@@ -154,19 +160,19 @@ impl DeezerClient {
             let big_string = media_info.artist();
             if !big_string.is_empty() {
                 big_string
-                    .get(..enriched_track.artist.len())
-                    .unwrap_or(&enriched_track.artist)
+                    .get(..enriched_track.artist.name.len())
+                    .unwrap_or(&enriched_track.artist.name)
             } else {
-                &enriched_track.artist
+                &enriched_track.artist.name
             }
         } else {
-            &enriched_track.artist
+            &enriched_track.artist.name
         };
         let album = if apple_music {
             let big_string = media_info.album();
             if !big_string.is_empty() {
                 big_string
-                    .get(enriched_track.artist.len()..)
+                    .get(enriched_track.artist.name.len()..)
                     .unwrap_or(&enriched_track.album.title)
                     .trim()
             } else {
@@ -191,12 +197,18 @@ impl DeezerClient {
             artist: if apple_music {
                 Some(artist.to_string())
             } else {
-                Some(media_info.artist.clone().unwrap_or(enriched_track.artist))
+                Some(
+                    media_info
+                        .artist
+                        .clone()
+                        .unwrap_or(enriched_track.artist.name),
+                )
             },
             elapsed_time: media_info.elapsed_time,
             cover_artwork: Some(CoverArtwork::from_url(
                 enriched_track
-                    .cover_artwork
+                    .album
+                    .cover_big
                     .unwrap_or_else(|| "default".to_string()),
             )),
             is_playing: media_info.is_playing,

@@ -18,7 +18,12 @@ impl Scrobble {
     pub fn from_media_info(track: &crate::models::MediaInfo, listen_type: ListenType) -> Self {
         let payload = Payload {
             listened_at: match listen_type {
-                ListenType::Single => Some(chrono::Utc::now().timestamp()),
+                ListenType::Single => Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                ),
                 ListenType::PlayingNow => None,
             },
             track_metadata: TrackMetadata {

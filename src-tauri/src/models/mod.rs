@@ -1,6 +1,7 @@
-use crate::{http, media_center::BROWSERS};
+use crate::media_center::BROWSERS;
 use bytes::Bytes;
 use image::DynamicImage;
+use log::{debug, info};
 use mini_moka::sync::Cache;
 use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
@@ -22,33 +23,11 @@ pub struct CoverArtwork {
 }
 
 impl CoverArtwork {
-    pub fn bytes(&self) -> Option<Bytes> {
+    pub fn bytes(&self) -> Option<&Bytes> {
         if let Some(data) = &self.data {
-            return Some(data.clone());
+            return Some(data);
         };
         return None;
-    }
-
-    /// always returns a slice
-    /// requires a mutable reference
-    /// because it will store the bytes in the struct if they are fetched from the url
-    pub async fn fetch_bytes(&mut self) -> Result<Bytes, reqwest::Error> {
-        if let Some(data) = &self.data {
-            return Ok(data.clone());
-        };
-        if let Some(url) = &self.url {
-            if let Ok(response) = http::client().get(url).send().await {
-                if response.status().is_success() {
-                    if let Ok(bytes) = response.bytes().await {
-                        let bytes = Bytes::from(bytes);
-                        self.data.replace(bytes.clone());
-                        return Ok(bytes);
-                    }
-                }
-            }
-        }
-        // will never happen
-        panic!("there should be a url or data for the cover image, but there is neither")
     }
 
     pub fn url(&self) -> Option<&str> {
@@ -75,18 +54,14 @@ impl CoverArtwork {
         }
     }
 
-    pub fn set_url(&mut self, url: String) {
-        self.url = Some(url);
-        self.data = None;
-    }
-
-    pub async fn upload_bytes(&mut self) -> Result<String, reqwest::Error> {
-        let bytes = self.data.clone().unwrap_or_else(|| Bytes::new());
+    pub async fn into_uploaded(&self) -> Result<Self, reqwest::Error> {
+        let Some(bytes) = self.data.as_ref() else {
+            return Ok(Self::from_url("default".to_string()));
+        };
         let hash = xxh3_64(&bytes);
         if let Some(cached_url) = LITTERBOX_CACHE.get(&hash) {
-            println!("already uploaded image {:016x}, cache hit", hash);
-            self.url = Some(cached_url.clone());
-            return Ok(cached_url);
+            debug!("already uploaded image {:016x}, cache hit", hash);
+            return Ok(Self::from_url(cached_url.clone()));
         }
         let form = reqwest::multipart::Form::new()
             .text("reqtype", "fileupload")
@@ -94,12 +69,12 @@ impl CoverArtwork {
             .text("time", "1h")
             .part(
                 "fileToUpload",
-                reqwest::multipart::Part::bytes(bytes.to_vec())
+                reqwest::multipart::Part::stream(bytes.clone())
                     .file_name("cover_image.jpg")
                     .mime_str("image/jpg")
                     .unwrap(),
             );
-        println!("uploading cover artwork to litterbox");
+        info!("uploading cover artwork to litterbox");
         let res = crate::http::client()
             .post("https://litterbox.catbox.moe/resources/internals/api.php")
             .multipart(form)
@@ -107,9 +82,8 @@ impl CoverArtwork {
             .await?;
 
         let url = res.text().await?;
-        self.url = Some(url.clone());
         LITTERBOX_CACHE.insert(hash, url.clone());
-        Ok(url)
+        Ok(Self::from_url(url))
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -177,18 +151,19 @@ impl MediaInfo {
         self.album.as_deref().unwrap_or_default()
     }
     pub fn is_apple_music(&self) -> bool {
-        self.player_name
-            .as_ref()
-            .map(|name| {
-                name.to_lowercase().contains("apple") && name.to_lowercase().contains("music")
-            }) // holy genius yo
-            .unwrap_or(false)
+        let Some(name) = &self.player_name else {
+            return false;
+        };
+        let name = name.to_lowercase();
+        name.contains("apple") && name.contains("music")
     }
     pub fn is_browser(&self) -> bool {
-        self.player_name
-            .as_deref()
-            .map(|name| BROWSERS.contains(&name.to_lowercase().as_str()))
-            .unwrap_or(false)
+        let Some(name) = &self.player_name else {
+            return false;
+        };
+        BROWSERS
+            .iter()
+            .any(|&browser| browser.eq_ignore_ascii_case(&name))
     }
 }
 
