@@ -24,14 +24,11 @@
   </p>
 </p>
 
-
 dotsong is a simple cross-platform tray app that allows users to scrobble now playing tracks from anywhere to last.fm, listenbrainz, and libre.fm
 
 it also allows you to display your current song as your discord presence
 
-dotsong is currently alpha or something like that. should be stable and everything, it's just that it's very incomplete. see the todo list for more info on that
-
-## installation note for macOS users:
+## installation note for macOS users
 
 i dont have a code signing license or whatever, so macOS will tell you that the app is damaged. you need to run the following in Terminal after you've installed:
 
@@ -42,6 +39,19 @@ xattr -c /Applications/dotsong.app
 ## why
 
 nobody else does this for free, for some reason
+
+### is dotsong right for me?
+
+the only other comparable app i know is [music presence](https://musicpresence.app/), so a brief comparison:
+
+| feature | dotsong | music presence |
+|   ---   |   ---   |       ---      |
+| scrobbling to last.fm, libre.fm, and listenbrainz-compatible APIs |   yes   |      [soon, paid, much more advanced](https://github.com/ungive/discord-music-presence/issues/365#issuecomment-4149731993)     |
+|    extremely lightweight     |    [yes](https://files.catbox.moe/sbi24u.mov)    |       [kinda](https://files.catbox.moe/c87no5.mov)     |
+|    total size (macOS .app)   |    10.6 MB    |     71.3 MB      |
+| discord presence | yes, similar to spotify | yes, more customizable |
+| supported players | should be about as much as music presence | over 170 |
+| browser extension | not planned, but still detects browser music | [soon](https://github.com/ungive/media-control-extension), more advanced than dotsong
 
 ### feats
 
