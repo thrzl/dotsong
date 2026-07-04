@@ -1,6 +1,7 @@
 use crate::{http, media_center::BROWSERS};
 use bytes::Bytes;
 use image::DynamicImage;
+use log::{debug, info};
 use mini_moka::sync::Cache;
 use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
@@ -86,7 +87,7 @@ impl CoverArtwork {
         };
         let hash = xxh3_64(&bytes);
         if let Some(cached_url) = LITTERBOX_CACHE.get(&hash) {
-            println!("already uploaded image {:016x}, cache hit", hash);
+            debug!("already uploaded image {:016x}, cache hit", hash);
             return Ok(Self::from_url(cached_url.clone()));
         }
         let form = reqwest::multipart::Form::new()
@@ -100,7 +101,7 @@ impl CoverArtwork {
                     .mime_str("image/jpg")
                     .unwrap(),
             );
-        println!("uploading cover artwork to litterbox");
+        info!("uploading cover artwork to litterbox");
         let res = crate::http::client()
             .post("https://litterbox.catbox.moe/resources/internals/api.php")
             .multipart(form)

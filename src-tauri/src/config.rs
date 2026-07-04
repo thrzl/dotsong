@@ -4,6 +4,7 @@ use crate::lastfm_auth;
 use crate::models::{listenbrainz, MediaInfo};
 use dashmap::DashMap;
 use last_fm_rs::{Client, NowPlaying, Scrobble};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 
 static CLIENT_POOL: LazyLock<DashMap<String, Client>> = LazyLock::new(|| DashMap::new());
@@ -37,7 +38,7 @@ pub enum LastFMHost {
 impl Scrobbler {
     async fn scrobble_listenbrainz(&self, track: &MediaInfo) {
         // implement ListenBrainz scrobbling logic here
-        println!(
+        info!(
             "scrobbling to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
             track.artist(),
@@ -54,7 +55,7 @@ impl Scrobbler {
             .json(&scrobble)
             .send()
             .await
-            .map_err(|e| eprintln!("failed to send scrobble to ListenBrainz: {}", e))
+            .map_err(|e| warn!("failed to send scrobble to ListenBrainz: {}", e))
             .ok();
     }
 
@@ -75,7 +76,7 @@ impl Scrobbler {
             .with_album(track.album())
             .with_duration(track.duration.unwrap_or_default().into());
         // implement LastFM scrobbling logic here
-        println!(
+        info!(
             "scrobbling to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
             track.artist(),
@@ -83,13 +84,13 @@ impl Scrobbler {
         );
         match client.scrobble(&[scrobble]).await {
             Ok(_) => (),
-            Err(e) => eprintln!("failed to send scrobble to LastFM: {}", e),
+            Err(e) => warn!("failed to send scrobble to LastFM: {}", e),
         };
     }
 
     async fn now_playing_listenbrainz(&self, track: &MediaInfo) {
         // implement ListenBrainz now playing logic here
-        println!(
+        info!(
             "sending now playing to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
             track.artist(),
@@ -109,7 +110,7 @@ impl Scrobbler {
         match res {
             Ok(response) => {
                 if !response.status().is_success() {
-                    eprintln!(
+                    warn!(
                         "Failed to send now playing to {}: HTTP {}\n{}",
                         self.endpoint_url.trim_end_matches("/"),
                         response.status(),
@@ -118,7 +119,7 @@ impl Scrobbler {
                 }
             }
             Err(e) => {
-                eprintln!(
+                warn!(
                     "Failed to send now playing to {}: {}",
                     self.endpoint_url.trim_end_matches("/"),
                     e
@@ -128,7 +129,7 @@ impl Scrobbler {
     }
 
     async fn now_playing_lastfm(&self, track: &MediaInfo, host: LastFMHost) {
-        println!(
+        info!(
             "sending now playing to {}: {} - {}",
             self.endpoint_url.trim_end_matches("/"),
             track.artist(),
@@ -147,7 +148,7 @@ impl Scrobbler {
             .with_duration(track.duration.unwrap_or_default().into());
         match client.update_now_playing(&now_playing).await {
             Ok(_) => (),
-            Err(e) => eprintln!("Failed to send now playing to LastFM: {}", e),
+            Err(e) => warn!("Failed to send now playing to LastFM: {}", e),
         };
     }
 

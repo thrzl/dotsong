@@ -1,6 +1,7 @@
 use crate::http;
 use crate::models;
 use crate::models::CoverArtwork;
+use log::{debug, warn};
 use mini_moka::sync::Cache;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use regex::Regex;
@@ -73,7 +74,7 @@ impl DeezerClient {
         let url = format!("https://api.deezer.com/search?q={}", query);
         let response = http::client().get(url).send().await.ok()?;
         if !response.status().is_success() {
-            println!(
+            warn!(
                 "deezer track search failed for query: {} with status: {}",
                 query,
                 response.status()
@@ -84,7 +85,7 @@ impl DeezerClient {
         let found_tracks = if response_json.data.len() > 0 {
             response_json.data
         } else {
-            println!(
+            debug!(
                 "deezer track search returned no results for query: {}",
                 query
             );
@@ -118,12 +119,12 @@ impl DeezerClient {
                     UniCase::new(&t.album.title) == UniCase::new(track.album().to_lowercase())
                 })
             } else {
-                println!("deezer track search: no album info, returning first match");
+                debug!("deezer track search: no album info, returning first match");
                 tracks.into_iter().next()
             };
             final_track
         };
-        println!(
+        debug!(
             "deezer track search for query: {} found: {:?}",
             query, track_info
         );

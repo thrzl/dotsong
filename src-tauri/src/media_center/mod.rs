@@ -4,6 +4,7 @@ use crate::config::Scrobbler;
 use crate::models::{self, CoverArtwork, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use futures::FutureExt;
+use log::{debug, info, warn};
 use parking_lot::{Mutex, RwLock};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -83,7 +84,7 @@ impl MediaCenter {
     }
 
     pub fn start_media_poller(self: Arc<Self>) {
-        println!("starting media poller");
+        info!("starting media poller");
         let media_source = self.media_source.clone();
         let inner_self = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -101,11 +102,11 @@ impl MediaCenter {
         if media_info.title.as_ref().is_none_or(|t| t.is_empty())
             && media_info.artist.as_ref().is_none_or(|a| a.is_empty())
         {
-            println!("ignoring event [empty]");
+            debug!("ignoring event [empty]");
             return;
         }
         if media_info.is_browser() && !self.config.read().allow_browsers {
-            println!("ignoring event [browsers disabled]");
+            debug!("ignoring event [browsers disabled]");
             return;
         }
         let last_track = self.last_track.load_full();
@@ -127,7 +128,7 @@ impl MediaCenter {
 
             if is_playing != last_track_is_playing {
                 // if they are the same track, but the playback state changed, we still want to send an event
-                println!(
+                debug!(
                     "playback state changed: {} -> {}",
                     last_track_is_playing, is_playing
                 );
@@ -137,7 +138,7 @@ impl MediaCenter {
                 self.play_state_notify.notify_one();
             } else {
                 // if they're the same track and the playback state didn't change, that means the position changed
-                println!("position changed");
+                debug!("position changed");
                 self.track_tx
                     .send(TrackUpdateEvent::PositionChanged(media_info.clone()))
                     .ok();
@@ -153,13 +154,13 @@ impl MediaCenter {
             Some(info) => info,
             None => {
                 if media_info.is_browser() {
-                    println!("ignoring unmatched event [browser]");
+                    debug!("ignoring unmatched event [browser]");
                     return;
                 }
                 media_info
             }
         };
-        println!(
+        info!(
             "new track: {} - {}",
             media_info.title(),
             media_info.artist()
@@ -172,14 +173,14 @@ impl MediaCenter {
             {
                 match cover_artwork.into_uploaded().await {
                     Ok(uploaded_artwork) => {
-                        println!(
+                        info!(
                             "uploaded cover artwork to litterbox: {}",
                             uploaded_artwork.url().unwrap_or_else(|| "unknown".into())
                         );
                         media_info.cover_artwork = Some(uploaded_artwork);
                     }
                     Err(e) => {
-                        println!("failed to upload cover artwork to litterbox: {}", e);
+                        warn!("failed to upload cover artwork to litterbox: {}", e);
                     }
                 }
             }
@@ -199,7 +200,7 @@ impl MediaCenter {
     }
 
     fn start_position_ticker(self: &Arc<Self>) {
-        println!("starting position ticker");
+        info!("starting position ticker");
         let tx = self.track_tx.clone();
         let play_state = self.play_state_notify.clone();
         let tick = Duration::from_secs(10);
@@ -209,7 +210,7 @@ impl MediaCenter {
             let mut is_playing = false;
             loop {
                 if !is_playing {
-                    println!("not playing, waiting for play state change");
+                    debug!("not playing, waiting for play state change");
                     play_state.notified().await;
                     let last_track = inner_self.last_track.load();
                     is_playing = last_track.as_ref().is_some_and(|t| t.is_playing);
@@ -224,7 +225,7 @@ impl MediaCenter {
                             let elapsed = track.elapsed_time.unwrap_or(0);
                             let duration = track.duration.unwrap_or(0);
                             let remaining = (duration / 2).saturating_sub(elapsed);
-                            println!("calculating next tick: elapsed = {}, duration = {}, remaining = {}", elapsed, duration, remaining);
+                            debug!("calculating next tick: elapsed = {}, duration = {}, remaining = {}", elapsed, duration, remaining);
                             if remaining > 0 {
                                 tokio::time::sleep(Duration::from_secs(remaining as u64)).boxed()
                             } else {
@@ -261,14 +262,14 @@ impl MediaCenter {
     }
 
     pub fn start_scrobbling_task(self: Arc<Self>) {
-        println!("starting scrobbling task");
+        info!("starting scrobbling task");
         let scrobblers = self.scrobblers.load_full();
         let mut rx = self.get_rx();
         let mut task_guard = self.scrobbling_task_handle.lock();
         if let Some(task_handle) = task_guard.take() {
             task_handle.abort();
         };
-        println!(
+        info!(
             "spawning scrobbling task with {} scrobblers",
             scrobblers.len()
         );
@@ -291,7 +292,7 @@ impl MediaCenter {
                         .await;
                     }
                     TrackUpdateEvent::PositionChanged(track) | TrackUpdateEvent::Tick(track) => {
-                        println!("scrobbling task received position change or tick event for track: {} - {}", track.title(), track.artist());
+                        debug!("scrobbling task received position change or tick event for track: {} - {}", track.title(), track.artist());
                         if track.elapsed_time.is_none() || track.duration.is_none() {
                             continue;
                         }

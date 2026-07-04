@@ -6,6 +6,7 @@ mod models;
 
 use discord_presence::DiscordError;
 use last_fm_rs::ScrobbleResponse;
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
@@ -146,13 +147,13 @@ async fn save_config(
             *task_lock = Some(state.start_discord_presence());
         }
     } else {
-        println!("stopping discord presence");
+        info!("stopping discord presence");
         state.stop_discord_presence();
     }
     let config_path = &state.config_path;
     let config_str = serde_json::to_string_pretty(&config).expect("failed to serialize config");
     state.media_center.set_scrobblers(config.scrobblers.clone());
-    println!("writing config");
+    info!("writing config");
     tokio::fs::write(config_path, config_str)
         .await
         .map_err(|e| format!("failed to write config file: {e}"))
@@ -181,7 +182,7 @@ impl AppState {
             let _ = rpc.clear_activity();
             let _ = rpc.shutdown();
         } else {
-            println!("no rpc client to shutdown");
+            debug!("no rpc client to shutdown");
         }
     }
     fn start_tray_updater(&self) {
@@ -227,7 +228,7 @@ impl AppState {
                     let handler_notify = notify.clone();
                     let _ = rpc
                         .on_ready(move |_client| {
-                            println!("discord RPC connected");
+                            info!("discord RPC connected");
                             handler_notify.notify_one();
                         })
                         .persist();
@@ -240,7 +241,7 @@ impl AppState {
                             break;
                         }
                         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-                            eprintln!("discord rpc not connected yet, retrying...");
+                            warn!("discord rpc not connected yet, retrying...");
                             rpc.lock().as_mut().unwrap().start();
                         }
 
@@ -261,7 +262,7 @@ impl AppState {
                     };
                     if !media_info.is_playing {
                         if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
                         };
                         continue;
                     }
@@ -319,12 +320,12 @@ impl AppState {
                                 })
                         });
                         if matches!(activity_result, Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
                             break;
                         }
                     } else {
                         if matches!(client.clear_activity(), Err(DiscordError::NotStarted)) {
-                            eprintln!("discord presence update failed; rpc not connected");
+                            warn!("discord presence update failed; rpc not connected");
                             break;
                         };
                     }
@@ -336,6 +337,7 @@ impl AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let program = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {})) // we don't gotta do anything just don't reopen
