@@ -1,5 +1,5 @@
+use log::debug;
 use std::sync::Arc;
-use log::{debug, warn};
 
 #[cfg(target_os = "macos")]
 use tokio::sync::mpsc;

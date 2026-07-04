@@ -1,7 +1,7 @@
 mod source;
 
 use crate::config::Scrobbler;
-use crate::models::{self, CoverArtwork, MediaInfo};
+use crate::models::{self, MediaInfo};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use futures::FutureExt;
 use log::{debug, info, warn};

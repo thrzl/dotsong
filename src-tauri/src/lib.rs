@@ -5,7 +5,6 @@ mod media_center;
 mod models;
 
 use discord_presence::DiscordError;
-use last_fm_rs::ScrobbleResponse;
 use log::{debug, info, warn};
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -17,10 +16,7 @@ use media_center::{MediaCenter, TrackUpdateEvent};
 use tauri::async_runtime::JoinHandle;
 use tauri::menu::{Menu, MenuItem};
 use tauri::Manager;
-use tauri::State;
 use tauri_plugin_opener::OpenerExt;
-
-use crate::models::CoverArtwork;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -85,13 +81,6 @@ struct UpdateInfo {
     latest: semver::Version,
     url: String,
     available: bool,
-}
-
-fn parse_version(s: &str) -> Vec<u64> {
-    s.trim_start_matches('v')
-        .split('.')
-        .filter_map(|p| p.parse().ok())
-        .collect()
 }
 
 #[tauri::command]

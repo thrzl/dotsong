@@ -1,4 +1,4 @@
-use crate::{http, media_center::BROWSERS};
+use crate::media_center::BROWSERS;
 use bytes::Bytes;
 use image::DynamicImage;
 use log::{debug, info};
@@ -30,28 +30,6 @@ impl CoverArtwork {
         return None;
     }
 
-    /// always returns a slice
-    /// requires a mutable reference
-    /// because it will store the bytes in the struct if they are fetched from the url
-    pub async fn fetch_bytes(&mut self) -> Result<Bytes, reqwest::Error> {
-        if let Some(data) = &self.data {
-            return Ok(data.clone());
-        };
-        if let Some(url) = &self.url {
-            if let Ok(response) = http::client().get(url).send().await {
-                if response.status().is_success() {
-                    if let Ok(bytes) = response.bytes().await {
-                        let bytes = Bytes::from(bytes);
-                        self.data.replace(bytes.clone());
-                        return Ok(bytes);
-                    }
-                }
-            }
-        }
-        // will never happen
-        panic!("there should be a url or data for the cover image, but there is neither")
-    }
-
     pub fn url(&self) -> Option<&str> {
         self.url.as_deref()
     }
@@ -74,11 +52,6 @@ impl CoverArtwork {
             data: Some(bytes),
             url: None,
         }
-    }
-
-    pub fn set_url(&mut self, url: String) {
-        self.url = Some(url);
-        self.data = None;
     }
 
     pub async fn into_uploaded(&self) -> Result<Self, reqwest::Error> {
