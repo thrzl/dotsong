@@ -55,9 +55,9 @@ the only other comparable app i know is [music presence](https://musicpresence.a
 
 ### feats
 
-- almost 0% CPU (the app spends most of its time waiting for updates)
-- 30-40 MB memory (when the settings menu is closed)
-- support for any listenbrainz/last.fm compatible scrobbling server
+- ~0% CPU (the app spends most of its time waiting for updates)
+- ~20 MB memory (~120 MB when settings menu is open)
+- support for last.fm, libre.fm, and any listenbrainz compatible scrobbling server
 - completely free
 
 ## todo list
