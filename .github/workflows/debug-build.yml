@@ -1,0 +1,78 @@
+name: build debug artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: commit sha, tag, or branch to build
+        required: true
+        default: main
+
+jobs:
+  build:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            artifact: windows-x64
+            bundles: exe
+          - platform: ubuntu-22.04
+            artifact: linux-x64-appimage
+            bundles: appimage
+          - platform: macos-latest
+            artifact: macos-arm64
+            bundles: app
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: show commit
+        run: git rev-parse HEAD
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: install linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xdg-utils libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev build-essential
+
+      - run: bun install --frozen-lockfile
+
+      - name: build debug bundle
+        run: bun tauri build --debug --bundles ${{ matrix.bundles }}${{ matrix.target && format(' --target {0}', matrix.target) || '' }}
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+          LIBREFM_API_KEY: ${{ secrets.LIBREFM_API_KEY }}
+          LIBREFM_API_SECRET: ${{ secrets.LIBREFM_API_SECRET }}
+
+      - name: zip mac app
+        if: matrix.platform == 'macos-latest'
+        run: |
+          find src-tauri/target -path '*/debug/bundle/macos/*.app' -type d | while read app; do
+            ditto -c -k --sequesterRsrc --keepParent "$app" "${app}.zip"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotsong-debug-${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/**/debug/bundle/macos/*.app.zip
+            src-tauri/target/debug/bundle/appimage/*.AppImage
+            src-tauri/target/debug/dotsong.exe
