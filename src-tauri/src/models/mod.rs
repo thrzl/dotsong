@@ -158,12 +158,20 @@ impl MediaInfo {
         name.contains("apple") && name.contains("music")
     }
     pub fn is_browser(&self) -> bool {
-        let Some(name) = &self.player_name else {
-            return false;
-        };
-        BROWSERS
-            .iter()
-            .any(|&browser| browser.eq_ignore_ascii_case(&name))
+        match &self.player_name {
+            Some(name) => {
+                let name = {
+                    #[cfg(target_os = "windows")]
+                    name.strip_suffix(".exe").unwrap_or(name);
+                    #[cfg(not(target_os = "windows"))]
+                    name
+                };
+                BROWSERS
+                    .iter()
+                    .any(|&browser| browser.eq_ignore_ascii_case(&name))
+            }
+            None => false,
+        }
     }
 }
 
