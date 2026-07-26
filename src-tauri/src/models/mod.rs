@@ -162,9 +162,13 @@ impl MediaInfo {
             Some(name) => {
                 let name = {
                     #[cfg(target_os = "windows")]
-                    name.strip_suffix(".exe").unwrap_or(name);
+                    {
+                        name.strip_suffix(".exe").unwrap_or(name)
+                    }
                     #[cfg(not(target_os = "windows"))]
-                    name
+                    {
+                        name
+                    }
                 };
                 BROWSERS
                     .iter()
