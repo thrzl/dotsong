@@ -116,10 +116,10 @@ impl DeezerClient {
             });
             let final_track = if track.album.as_ref().is_some_and(|a| !a.is_empty()) {
                 tracks.find(|t| {
-                    UniCase::new(&t.album.title) == UniCase::new(track.album().to_lowercase())
+                    UniCase::new(CLEAN_TITLE_RE.replace(&t.album.title, "").trim())
+                        == UniCase::new(CLEAN_TITLE_RE.replace(track.album(), "").trim())
                 })
             } else {
-                debug!("deezer track search: no album info, returning first match");
                 tracks.into_iter().next()
             };
             final_track
