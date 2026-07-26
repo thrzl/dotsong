@@ -17,7 +17,7 @@ jobs:
         include:
           - platform: windows-latest
             artifact: windows-x64
-            bundles: exe
+            bundles: msi
           - platform: ubuntu-22.04
             artifact: linux-x64-appimage
             bundles: appimage
@@ -75,4 +75,4 @@ jobs:
           path: |
             src-tauri/target/**/debug/bundle/macos/*.app.zip
             src-tauri/target/debug/bundle/appimage/*.AppImage
-            src-tauri/target/debug/dotsong.exe
+            src-tauri/target/debug/bundle/msi/*.msi
