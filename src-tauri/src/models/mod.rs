@@ -163,7 +163,10 @@ impl MediaInfo {
                 let name = {
                     #[cfg(target_os = "windows")]
                     {
-                        name.strip_suffix(".exe").unwrap_or(name)
+                        let name = name.strip_suffix(".exe").unwrap_or(name);
+                        let without_aumid = name.split('.').next().unwrap_or(name);
+                        println!("checking if {} is a browser", without_aumid);
+                        without_aumid
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
