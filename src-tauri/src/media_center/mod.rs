@@ -14,7 +14,7 @@ use unicase::UniCase;
 
 pub static BROWSERS: &[&str] = &[
     "chrome", "firefox", "safari", "msedge", "brave", "vivaldi", "helium", "opera", "orion",
-    "chromium",
+    "chromium", "zen",
 ];
 
 #[derive(Clone, Debug)]
